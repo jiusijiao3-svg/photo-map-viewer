@@ -259,7 +259,6 @@ jobs:
                   super.onCreate(savedInstanceState)
 
                   loadSettings()
-                  checkPermissions()
 
                   val rootContainer = FrameLayout(this).apply {
                       layoutParams = ViewGroup.LayoutParams(
@@ -449,8 +448,10 @@ jobs:
                   rootContainer.addView(fullContainer)
 
                   setContentView(rootContainer)
-
                   setupWebView()
+
+                  // 【重要】画面部品がすべて生成された最後に権限確認と自動復帰を呼ぶ
+                  checkPermissions()
               }
 
               private fun loadSettings() {
@@ -545,7 +546,6 @@ jobs:
                   dialogView.addView(gridView)
 
                   var dialogRef: AlertDialog? = null
-
                   val cellSize = (resources.displayMetrics.widthPixels - 36.dp()) / 3
 
                   gridView.adapter = object : BaseAdapter() {
@@ -571,7 +571,6 @@ jobs:
                                   textSize = 10f
                                   setTextColor(Color.WHITE)
                                   setBackgroundColor(Color.parseColor("#99000000"))
-                                  // 前回のパディングエラーを修正: 2.dp() と記述
                                   setPadding(4.dp(), 2.dp(), 4.dp(), 2.dp())
                                   layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START)
                               }
@@ -618,7 +617,6 @@ jobs:
                               dialogRef?.dismiss()
                               navigateTo(position)
                           }
-
                           return frame
                       }
                   }
@@ -1031,10 +1029,14 @@ jobs:
                       ivThumbnail.setImageDrawable(null)
 
                       val files = withContext(Dispatchers.IO) {
-                          val rootDoc = DocumentFile.fromTreeUri(this@MainActivity, folderUri)
-                          rootDoc?.listFiles()?.filter {
-                              it.isFile && (it.name?.endsWith(".jpg", true) == true || it.name?.endsWith(".jpeg", true) == true)
-                          } ?: emptyList()
+                          try {
+                              val rootDoc = DocumentFile.fromTreeUri(this@MainActivity, folderUri)
+                              rootDoc?.listFiles()?.filter {
+                                  it.isFile && (it.name?.endsWith(".jpg", true) == true || it.name?.endsWith(".jpeg", true) == true)
+                              } ?: emptyList()
+                          } catch (e: Exception) {
+                              emptyList()
+                          }
                       }
 
                       if (files.isEmpty()) {

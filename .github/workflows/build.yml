@@ -114,7 +114,7 @@ jobs:
           </resources>
           EOF
 
-          # 6. app/src/main/AndroidManifest.xml (位置情報アクセス権限を追加)
+          # 6. app/src/main/AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -163,6 +163,7 @@ jobs:
           import android.widget.TextView
           import android.widget.Toast
           import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.appcompat.app.AlertDialog
           import androidx.appcompat.app.AppCompatActivity
           import androidx.core.content.ContextCompat
           import androidx.documentfile.provider.DocumentFile
@@ -185,11 +186,15 @@ jobs:
               private var currentIndex = 0
               private var isMapReady = false
 
+              // 設定状態
+              private var isSortDesc = true        // true: 新しい順, false: 古い順
+              private var limitMapPins = true      // true: 上から50枚, false: 全て
+
               private lateinit var ivThumbnail: ImageView
               private lateinit var tvImageInfo: TextView
               private lateinit var mapWebView: WebView
-              private lateinit var btnPrev: Button
-              private lateinit var btnNext: Button
+              private lateinit var btnNewer: Button
+              private lateinit var btnOlder: Button
               private lateinit var btnGsi: Button
               private lateinit var btnGoogleMap: Button
 
@@ -197,7 +202,7 @@ jobs:
 
               private val permissionLauncher = registerForActivityResult(
                   ActivityResultContracts.RequestMultiplePermissions()
-              ) { /* 権限許可後の処理（必要に応じて） */ }
+              ) { }
 
               private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
                   if (uri != null) {
@@ -224,16 +229,36 @@ jobs:
                       )
                   }
 
+                  // 1. 最上部バー（[≡ 設定] [📁 フォルダ選択]）
+                  val topRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
+                  }
+
+                  val btnSettings = Button(this).apply {
+                      text = "≡"
+                      textSize = 20f
+                      setBackgroundColor(Color.parseColor("#383838"))
+                      setTextColor(Color.WHITE)
+                      layoutParams = LinearLayout.LayoutParams(48.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                          marginEnd = 6.dp()
+                      }
+                      setOnClickListener { showSettingsDialog() }
+                  }
+                  topRow.addView(btnSettings)
+
                   val btnSelectFolder = Button(this).apply {
                       text = "📁 フォルダ選択"
-                      textSize = 15f
+                      textSize = 14f
                       setBackgroundColor(Color.parseColor("#2D2D2D"))
                       setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
+                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
                       setOnClickListener { folderPicker.launch(null) }
                   }
-                  rootLayout.addView(btnSelectFolder)
+                  topRow.addView(btnSelectFolder)
+                  rootLayout.addView(topRow)
 
+                  // 2. サムネイル枠
                   val thumbContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply {
                           topMargin = 6.dp()
@@ -259,6 +284,7 @@ jobs:
                   thumbContainer.addView(tvImageInfo)
                   rootLayout.addView(thumbContainer)
 
+                  // 3. 中段ボタン（国土地理院 / Googleマップ）
                   val midRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply {
@@ -286,6 +312,7 @@ jobs:
                   midRow.addView(btnGoogleMap)
                   rootLayout.addView(midRow)
 
+                  // 4. 地図ビュー
                   mapWebView = WebView(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
                           topMargin = 6.dp()
@@ -294,34 +321,103 @@ jobs:
                   }
                   rootLayout.addView(mapWebView)
 
+                  // 5. 下段ボタン（[◀ 新しい写真] [古い写真 ▶]）
                   val btmRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
                   }
 
-                  btnNext = Button(this).apply {
-                      text = "◀ 次のファイル (古い)"
+                  btnNewer = Button(this).apply {
+                      text = "◀ 新しい写真"
                       textSize = 12f
                       setBackgroundColor(Color.parseColor("#2D2D2D"))
                       setTextColor(Color.WHITE)
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }
-                      setOnClickListener { navigateTo(currentIndex + 1) }
+                      setOnClickListener {
+                          // 新しい写真へ移動
+                          val targetIndex = if (isSortDesc) currentIndex - 1 else currentIndex + 1
+                          navigateTo(targetIndex)
+                      }
                   }
-                  btnPrev = Button(this).apply {
-                      text = "前のファイル (新しい) ▶"
+                  btnOlder = Button(this).apply {
+                      text = "古い写真 ▶"
                       textSize = 12f
                       setBackgroundColor(Color.parseColor("#2D2D2D"))
                       setTextColor(Color.WHITE)
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = 4.dp() }
-                      setOnClickListener { navigateTo(currentIndex - 1) }
+                      setOnClickListener {
+                          // 古い写真へ移動
+                          val targetIndex = if (isSortDesc) currentIndex + 1 else currentIndex - 1
+                          navigateTo(targetIndex)
+                      }
                   }
-                  btmRow.addView(btnNext)
-                  btmRow.addView(btnPrev)
+                  btmRow.addView(btnNewer)
+                  btmRow.addView(btnOlder)
                   rootLayout.addView(btmRow)
 
                   setContentView(rootLayout)
 
                   setupWebView()
+              }
+
+              private fun showSettingsDialog() {
+                  val items = arrayOf(
+                      "ファイル並び順: ${if (isSortDesc) "新しい順 (降順)" else "古い順 (昇順)"}",
+                      "地図ピン表示: ${if (limitMapPins) "上から50枚のみ" else "全件表示"}"
+                  )
+
+                  AlertDialog.Builder(this)
+                      .setTitle("設定")
+                      .setItems(items) { _, which ->
+                          when (which) {
+                              0 -> showSortDialog()
+                              1 -> showPinLimitDialog()
+                          }
+                      }
+                      .setNegativeButton("閉じる", null)
+                      .show()
+              }
+
+              private fun showSortDialog() {
+                  val options = arrayOf("新しい順 (降順)", "古い順 (昇順)")
+                  val currentSelection = if (isSortDesc) 0 else 1
+                  AlertDialog.Builder(this)
+                      .setTitle("ファイルの並び順")
+                      .setSingleChoiceItems(options, currentSelection) { dialog, which ->
+                          isSortDesc = (which == 0)
+                          applySort()
+                          dialog.dismiss()
+                      }
+                      .show()
+              }
+
+              private fun showPinLimitDialog() {
+                  val options = arrayOf("上から50枚のみ表示 (推奨・軽量)", "全ての写真を地図に表示")
+                  val currentSelection = if (limitMapPins) 0 else 1
+                  AlertDialog.Builder(this)
+                      .setTitle("地図ピンの表示数")
+                      .setSingleChoiceItems(options, currentSelection) { dialog, which ->
+                          limitMapPins = (which == 0)
+                          renderCurrentPhotoOnMap()
+                          dialog.dismiss()
+                      }
+                      .show()
+              }
+
+              private fun applySort() {
+                  if (photoList.isEmpty()) return
+                  val currentItem = photoList.getOrNull(currentIndex)
+                  if (isSortDesc) {
+                      photoList.sortByDescending { it.lastModified }
+                  } else {
+                      photoList.sortBy { it.lastModified }
+                  }
+
+                  if (currentItem != null) {
+                      val newIndex = photoList.indexOfFirst { it.uri == currentItem.uri }
+                      currentIndex = if (newIndex != -1) newIndex else 0
+                  }
+                  displayPhoto(currentIndex)
               }
 
               private fun checkPermissions() {
@@ -432,8 +528,6 @@ jobs:
                   for (file in files) {
                       if (file.isFile && (file.name?.endsWith(".jpg", true) == true || file.name?.endsWith(".jpeg", true) == true)) {
                           val item = PhotoItem(file.uri, file.name ?: "", file.lastModified())
-                          
-                          // FileDescriptor を使って安全かつ確実にExifを読み取る
                           try {
                               contentResolver.openFileDescriptor(file.uri, "r")?.use { pfd ->
                                   val exif = ExifInterface(pfd.fileDescriptor)
@@ -444,17 +538,22 @@ jobs:
                                       item.debugStatus = "OK"
                                   } else {
                                       val rawLat = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE)
-                                      item.debugStatus = if (rawLat != null) "RawGPSあり(解析失敗)" else "GPSタグなし"
+                                      item.debugStatus = if (rawLat != null) "RawGPSあり" else "GPSタグなし"
                                   }
                               }
                           } catch (e: Exception) {
-                              item.debugStatus = "例外: ${e.message}"
+                              item.debugStatus = "例外"
                           }
                           photoList.add(item)
                       }
                   }
 
-                  photoList.sortByDescending { it.lastModified }
+                  // 設定に応じたソートを適用
+                  if (isSortDesc) {
+                      photoList.sortByDescending { it.lastModified }
+                  } else {
+                      photoList.sortBy { it.lastModified }
+                  }
 
                   if (photoList.isNotEmpty()) {
                       currentIndex = 0
@@ -492,8 +591,12 @@ jobs:
                   }
                   tvImageInfo.text = "[${index + 1}/${photoList.size}] ${item.name}\n$gpsText"
 
-                  btnNext.isEnabled = (index < photoList.size - 1)
-                  btnPrev.isEnabled = (index > 0)
+                  // ボタンの有効／無効判定
+                  val canGoNewer = if (isSortDesc) index > 0 else index < photoList.size - 1
+                  val canGoOlder = if (isSortDesc) index < photoList.size - 1 else index > 0
+
+                  btnNewer.isEnabled = canGoNewer
+                  btnOlder.isEnabled = canGoOlder
 
                   val hasGps = (item.lat != null && item.lon != null)
                   btnGsi.isEnabled = hasGps
@@ -508,14 +611,18 @@ jobs:
                   val current = photoList[currentIndex]
                   val jsonArray = JSONArray()
 
-                  photoList.forEachIndexed { idx, p ->
+                  // ピン表示制限の適用（50枚 or 全件）
+                  val targets = if (limitMapPins) photoList.take(50) else photoList
+
+                  targets.forEach { p ->
                       if (p.lat != null && p.lon != null) {
+                          val originalIndex = photoList.indexOf(p)
                           val obj = JSONObject().apply {
-                              put("index", idx)
+                              put("index", originalIndex)
                               put("lat", p.lat)
                               put("lon", p.lon)
                               put("hasGps", true)
-                              put("isCurrent", idx == currentIndex)
+                              put("isCurrent", originalIndex == currentIndex)
                           }
                           jsonArray.put(obj)
                       }

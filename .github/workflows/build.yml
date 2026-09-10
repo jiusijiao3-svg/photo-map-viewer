@@ -147,6 +147,7 @@ jobs:
           import android.Manifest
           import android.annotation.SuppressLint
           import android.content.Context
+          import android.content.DialogInterface
           import android.content.Intent
           import android.content.pm.PackageManager
           import android.graphics.Bitmap
@@ -570,7 +571,8 @@ jobs:
                                   textSize = 10f
                                   setTextColor(Color.WHITE)
                                   setBackgroundColor(Color.parseColor("#99000000"))
-                                  setPadding(4.dp(), 2.dp(), 4.dp(), 2.dp)
+                                  // 前回のパディングエラーを修正: 2.dp() と記述
+                                  setPadding(4.dp(), 2.dp(), 4.dp(), 2.dp())
                                   layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START)
                               }
                               frame.addView(img)
@@ -694,7 +696,7 @@ jobs:
                       .show()
               }
 
-              private fun finishPinChange(dialog: android.content.DialogInterface) {
+              private fun finishPinChange(dialog: DialogInterface) {
                   saveSettings()
                   renderCurrentPhotoOnMap()
                   dialog.dismiss()

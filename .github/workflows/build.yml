@@ -15,6 +15,12 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Gradle のセットアップ
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.5'
+          cache-disabled: true
+
       - name: Android SDK ライセンスの自動承諾
         run: |
           mkdir -p "$ANDROID_HOME/licenses"
@@ -23,6 +29,7 @@ jobs:
       - name: プロジェクト構造とソースコードの一括生成
         run: |
           mkdir -p app/src/main/java/com/example/photomapviewer
+          mkdir -p app/src/main/res/values
 
           # 1. local.properties
           echo "sdk.dir=$ANDROID_HOME" > local.properties
@@ -92,7 +99,15 @@ jobs:
           }
           EOF
 
-          # 5. app/src/main/AndroidManifest.xml
+          # 5. app/src/main/res/values/styles.xml
+          cat << 'EOF' > app/src/main/res/values/styles.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar" />
+          </resources>
+          EOF
+
+          # 6. app/src/main/AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -100,7 +115,7 @@ jobs:
               <application
                   android:allowBackup="true"
                   android:label="PhotoMapViewer"
-                  android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+                  android:theme="@style/AppTheme">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
@@ -113,7 +128,7 @@ jobs:
           </manifest>
           EOF
 
-          # 6. app/src/main/java/com/example/photomapviewer/MainActivity.kt
+          # 7. app/src/main/java/com/example/photomapviewer/MainActivity.kt
           cat << 'EOF' > app/src/main/java/com/example/photomapviewer/MainActivity.kt
           package com.example.photomapviewer
 
@@ -188,7 +203,6 @@ jobs:
                       )
                   }
 
-                  // 1. フォルダ選択ボタン
                   val btnSelectFolder = Button(this).apply {
                       text = "📁 フォルダ選択"
                       textSize = 15f
@@ -199,7 +213,6 @@ jobs:
                   }
                   rootLayout.addView(btnSelectFolder)
 
-                  // 2. サムネイル枠
                   val thumbContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply {
                           topMargin = 6.dp()
@@ -225,7 +238,6 @@ jobs:
                   thumbContainer.addView(tvImageInfo)
                   rootLayout.addView(thumbContainer)
 
-                  // 3. 中段ボタン（国土地理院 / Googleマップ）
                   val midRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply {
@@ -253,7 +265,6 @@ jobs:
                   midRow.addView(btnGoogleMap)
                   rootLayout.addView(midRow)
 
-                  // 4. 地図ビュー
                   mapWebView = WebView(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
                           topMargin = 6.dp()
@@ -262,7 +273,6 @@ jobs:
                   }
                   rootLayout.addView(mapWebView)
 
-                  // 5. 下段ボタン（次ファイル / 前ファイル）
                   val btmRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
@@ -370,7 +380,6 @@ jobs:
                                           weight: 3
                                       }).addTo(markerLayer);
 
-                                      // 縮尺は固定してパン移動
                                       map.panTo([targetLat, targetLon], { animate: true, duration: 0.4 });
                                   }
                               }
@@ -393,10 +402,10 @@ jobs:
                           try {
                               contentResolver.openInputStream(file.uri)?.use { stream ->
                                   val exif = ExifInterface(stream)
-                                  val latLong = exif.latLong
-                                  if (latLong != null && latLong.size >= 2) {
-                                      item.lat = latLong[0]
-                                      item.lon = latLong[1]
+                                  val fa = FloatArray(2)
+                                  if (exif.getLatLong(fa)) {
+                                      item.lat = fa[0].toDouble()
+                                      item.lon = fa[1].toDouble()
                                   }
                               }
                           } catch (e: Exception) {}
@@ -516,9 +525,7 @@ jobs:
           EOF
 
       - name: APKのビルド
-        run: |
-          gradle wrapper --gradle-version 8.5
-          ./gradlew assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: 完成したAPKをアーティファクトに保存
         uses: actions/upload-artifact@v4

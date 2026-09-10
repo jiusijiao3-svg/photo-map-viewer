@@ -146,6 +146,7 @@ jobs:
 
           import android.Manifest
           import android.annotation.SuppressLint
+          import android.app.Dialog
           import android.content.Context
           import android.content.Intent
           import android.content.pm.PackageManager
@@ -273,7 +274,7 @@ jobs:
                   topRow.addView(btnSelectFolder)
                   rootLayout.addView(topRow)
 
-                  // 2. サムネイル枠
+                  // 2. サムネイル枠（タップで全画面表示）
                   val thumbContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply {
                           topMargin = 6.dp()
@@ -284,6 +285,7 @@ jobs:
                   ivThumbnail = ImageView(this).apply {
                       layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                       scaleType = ImageView.ScaleType.FIT_CENTER
+                      setOnClickListener { showFullScreenPhoto() }
                   }
                   thumbContainer.addView(ivThumbnail)
 
@@ -371,6 +373,49 @@ jobs:
                   setContentView(rootLayout)
 
                   setupWebView()
+              }
+
+              // サムネイルタップ時の全画面表示
+              private fun showFullScreenPhoto() {
+                  if (photoList.isEmpty()) return
+                  val item = photoList.getOrNull(currentIndex) ?: return
+
+                  // システムナビゲーションバー（▽など）を残した黒背景フルスクリーンダイアログ
+                  val fullDialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar)
+                  val fullImageView = ImageView(this).apply {
+                      layoutParams = ViewGroup.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.MATCH_PARENT
+                      )
+                      scaleType = ImageView.ScaleType.FIT_CENTER
+                      setBackgroundColor(Color.BLACK)
+                      // 画面タップでも戻る
+                      setOnClickListener { fullDialog.dismiss() }
+                  }
+                  fullDialog.setContentView(fullImageView)
+
+                  // 高画質デコード（OOM対策を施して滑らかに表示）
+                  try {
+                      contentResolver.openInputStream(item.uri)?.use { boundsStream ->
+                          val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                          BitmapFactory.decodeStream(boundsStream, null, options)
+
+                          var inSample = 1
+                          val maxDim = maxOf(options.outWidth, options.outHeight)
+                          while (maxDim / inSample > 3840) {
+                              inSample *= 2
+                          }
+
+                          val decodeOptions = BitmapFactory.Options().apply { inSampleSize = inSample }
+                          contentResolver.openInputStream(item.uri)?.use { imageStream ->
+                              val bmp = BitmapFactory.decodeStream(imageStream, null, decodeOptions)
+                              fullImageView.setImageBitmap(bmp)
+                          }
+                      }
+                      fullDialog.show()
+                  } catch (e: Exception) {
+                      Toast.makeText(this, "画像の拡大表示に失敗しました", Toast.LENGTH_SHORT).show()
+                  }
               }
 
               private fun showSettingsDialog() {
@@ -569,33 +614,54 @@ jobs:
 
                               var markerLayer = L.layerGroup().addTo(map);
 
-                              function updatePoints(targetLat, targetLon, hasCoords, allPointsJson) {
+                              function updatePoints(targetLat, targetLon, hasCoords, allPointsJson, currentIndex) {
                                   markerLayer.clearLayers();
                                   var points = JSON.parse(allPointsJson);
 
+                                  // 赤丸マーカー（他写真）
                                   points.forEach(function(p) {
                                       if (p.hasGps && !p.isCurrent) {
-                                          var marker = L.circleMarker([p.lat, p.lon], {
-                                              radius: 6,
+                                          // 表示用の赤い点
+                                          L.circleMarker([p.lat, p.lon], {
+                                              radius: 7,
                                               color: '#ff3333',
                                               fillColor: '#ff0000',
-                                              fillOpacity: 0.8,
+                                              fillOpacity: 0.85,
                                               weight: 2
                                           }).addTo(markerLayer);
-                                          marker.on('click', function() {
+
+                                          // タップしやすい透明な拡大当たり判定円 (半径22px)
+                                          var hitArea = L.circleMarker([p.lat, p.lon], {
+                                              radius: 22,
+                                              opacity: 0,
+                                              fillOpacity: 0
+                                          }).addTo(markerLayer);
+
+                                          hitArea.on('click', function() {
                                               Android.onMarkerClicked(p.index);
                                           });
                                       }
                                   });
 
+                                  // 青丸マーカー（選択中写真）
                                   if (hasCoords) {
                                       L.circleMarker([targetLat, targetLon], {
-                                          radius: 9,
+                                          radius: 10,
                                           color: '#ffffff',
                                           fillColor: '#0066ff',
                                           fillOpacity: 0.95,
                                           weight: 3
                                       }).addTo(markerLayer);
+
+                                      var currentHit = L.circleMarker([targetLat, targetLon], {
+                                          radius: 24,
+                                          opacity: 0,
+                                          fillOpacity: 0
+                                      }).addTo(markerLayer);
+
+                                      currentHit.on('click', function() {
+                                          Android.onMarkerClicked(currentIndex);
+                                      });
 
                                       map.panTo([targetLat, targetLon], { animate: true, duration: 0.4 });
                                   }
@@ -751,7 +817,7 @@ jobs:
                   val lon = current.lon ?: 0.0
 
                   mapWebView.evaluateJavascript(
-                      "updatePoints($lat, $lon, $hasCoords, '${jsonArray}');",
+                      "updatePoints($lat, $lon, $hasCoords, '${jsonArray}', $currentIndex);",
                       null
                   )
               }
@@ -783,7 +849,9 @@ jobs:
                   @JavascriptInterface
                   fun onMarkerClicked(index: Int) {
                       runOnUiThread {
-                          navigateTo(index)
+                          if (index >= 0) {
+                              navigateTo(index)
+                          }
                       }
                   }
               }

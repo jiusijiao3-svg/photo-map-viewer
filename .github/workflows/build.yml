@@ -20,9 +20,14 @@ jobs:
         with:
           gradle-version: '8.5'
 
+      - name: Android SDK ライセンスの自動承諾
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
       - name: プロジェクト構造とソースコードの一括生成
         run: |
           mkdir -p app/src/main/java/com/example/photomapviewer
+          mkdir -p app/src/main/res/values
 
           # 1. settings.gradle.kts
           cat << 'EOF' > settings.gradle.kts
@@ -94,7 +99,15 @@ jobs:
           }
           EOF
 
-          # 4. AndroidManifest.xml
+          # 4. res/values/styles.xml (テーマ定義の補完)
+          cat << 'EOF' > app/src/main/res/values/styles.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar" />
+          </resources>
+          EOF
+
+          # 5. AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -103,7 +116,7 @@ jobs:
                   android:allowBackup="true"
                   android:icon="@android:drawable/ic_menu_mapmode"
                   android:label="PhotoMapViewer"
-                  android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+                  android:theme="@style/AppTheme">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
@@ -116,7 +129,7 @@ jobs:
           </manifest>
           EOF
 
-          # 5. MainActivity.kt (単一ソースコード・画面XML不要)
+          # 6. MainActivity.kt (catch構文エラー修正済み)
           cat << 'EOF' > app/src/main/java/com/example/photomapviewer/MainActivity.kt
           package com.example.photomapviewer
 
@@ -228,7 +241,7 @@ jobs:
                   thumbContainer.addView(tvImageInfo)
                   rootLayout.addView(thumbContainer)
 
-                  // 3. 中段ボタン行（左：国土地理院 / 右：Googleマップ）
+                  // 3. 中段ボタン行
                   val midRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply {
@@ -256,7 +269,7 @@ jobs:
                   midRow.addView(btnGoogleMap)
                   rootLayout.addView(midRow)
 
-                  // 4. 地図ビュー（Leaflet + WebView）
+                  // 4. 地図ビュー
                   mapWebView = WebView(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
                           topMargin = 6.dp()
@@ -265,7 +278,7 @@ jobs:
                   }
                   rootLayout.addView(mapWebView)
 
-                  // 5. 最下部ボタン行（左：次ファイル / 右：前ファイル）
+                  // 5. 最下部ボタン行
                   val btmRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
@@ -349,7 +362,6 @@ jobs:
                                   markerLayer.clearLayers();
                                   var points = JSON.parse(allPointsJson);
 
-                                  // 他の写真を赤丸で描画（タップで直接ジャンプ）
                                   points.forEach(function(p) {
                                       if (p.hasGps && !p.isCurrent) {
                                           var marker = L.circleMarker([p.lat, p.lon], {
@@ -365,7 +377,6 @@ jobs:
                                       }
                                   });
 
-                                  // 選択中の写真は青丸で描画
                                   if (hasCoords) {
                                       L.circleMarker([targetLat, targetLon], {
                                           radius: 9,
@@ -375,7 +386,7 @@ jobs:
                                           weight: 3
                                       }).addTo(markerLayer);
 
-                                      // 縮尺（ズーム倍率）は維持したまま中心パン
+                                      // 縮尺（ズーム倍率）は維持して中心移動
                                       map.panTo([targetLat, targetLon], { animate: true, duration: 0.4 });
                                   }
                               }
@@ -404,12 +415,11 @@ jobs:
                                       item.lon = latLong[1].toDouble()
                                   }
                               }
-                          } catch (_: Exception) {}
+                          } catch (e: Exception) {}
                           photoList.add(item)
                       }
                   }
 
-                  // 新しい順（降順）にソート
                   photoList.sortByDescending { it.lastModified }
 
                   if (photoList.isNotEmpty()) {
@@ -437,7 +447,7 @@ jobs:
                           val bitmap = BitmapFactory.decodeStream(stream, null, options)
                           ivThumbnail.setImageBitmap(bitmap)
                       }
-                  } catch (_: Exception) {
+                  } catch (e: Exception) {
                       ivThumbnail.setImageDrawable(null)
                   }
 
@@ -505,7 +515,7 @@ jobs:
                   }
                   try {
                       startActivity(intent)
-                  } catch (_: Exception) {
+                  } catch (e: Exception) {
                       startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=$lat,$lon")))
                   }
               }

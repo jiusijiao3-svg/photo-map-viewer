@@ -15,100 +15,84 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Gradle のセットアップ (キャッシュ無効化で障害回避)
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.5'
-          cache-disabled: true
-
       - name: Android SDK ライセンスの自動承諾
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          mkdir -p "$ANDROID_HOME/licenses"
+          echo -e "24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e" > "$ANDROID_HOME/licenses/android-sdk-license"
 
       - name: プロジェクト構造とソースコードの一括生成
         run: |
           mkdir -p app/src/main/java/com/example/photomapviewer
-          mkdir -p app/src/main/res/values
 
-          # 1. settings.gradle.kts
-          cat << 'EOF' > settings.gradle.kts
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
-          }
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
+          # 1. local.properties
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+          # 2. settings.gradle
+          cat << 'EOF' > settings.gradle
+          include ':app'
           rootProject.name = "PhotoMapViewer"
-          include(":app")
           EOF
 
-          # 2. build.gradle.kts (Root)
-          cat << 'EOF' > build.gradle.kts
-          plugins {
-              id("com.android.application") version "8.2.2" apply false
-              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          # 3. build.gradle (Root)
+          cat << 'EOF' > build.gradle
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:8.2.2'
+                  classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22'
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
           }
           EOF
 
-          # 3. app/build.gradle.kts
-          cat << 'EOF' > app/build.gradle.kts
-          plugins {
-              id("com.android.application")
-              id("org.jetbrains.kotlin.android")
-          }
+          # 4. app/build.gradle
+          cat << 'EOF' > app/build.gradle
+          apply plugin: 'com.android.application'
+          apply plugin: 'kotlin-android'
 
           android {
-              namespace = "com.example.photomapviewer"
-              compileSdk = 34
+              namespace 'com.example.photomapviewer'
+              compileSdk 34
 
               defaultConfig {
-                  applicationId = "com.example.photomapviewer"
-                  minSdk = 26
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
+                  applicationId "com.example.photomapviewer"
+                  minSdk 26
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
               }
 
               buildTypes {
                   release {
-                      isMinifyEnabled = false
+                      isMinifyEnabled false
                   }
               }
               compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
               }
               kotlinOptions {
-                  jvmTarget = "17"
+                  jvmTarget = '17'
               }
           }
 
           dependencies {
-              implementation("androidx.core:core-ktx:1.12.0")
-              implementation("androidx.appcompat:appcompat:1.6.1")
-              implementation("com.google.android.material:material:1.11.0")
-              implementation("androidx.exifinterface:exifinterface:1.3.7")
-              implementation("androidx.documentfile:documentfile:1.0.1")
+              implementation 'androidx.core:core-ktx:1.12.0'
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'androidx.exifinterface:exifinterface:1.3.7'
+              implementation 'androidx.documentfile:documentfile:1.0.1'
           }
           EOF
 
-          # 4. res/values/styles.xml
-          cat << 'EOF' > app/src/main/res/values/styles.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar" />
-          </resources>
-          EOF
-
-          # 5. AndroidManifest.xml
+          # 5. app/src/main/AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -116,7 +100,7 @@ jobs:
               <application
                   android:allowBackup="true"
                   android:label="PhotoMapViewer"
-                  android:theme="@style/AppTheme">
+                  android:theme="@style/Theme.AppCompat.Light.NoActionBar">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
@@ -129,7 +113,7 @@ jobs:
           </manifest>
           EOF
 
-          # 6. MainActivity.kt (ExifInterface構文修正版)
+          # 6. app/src/main/java/com/example/photomapviewer/MainActivity.kt
           cat << 'EOF' > app/src/main/java/com/example/photomapviewer/MainActivity.kt
           package com.example.photomapviewer
 
@@ -215,7 +199,7 @@ jobs:
                   }
                   rootLayout.addView(btnSelectFolder)
 
-                  // 2. 画像サムネイル枠
+                  // 2. サムネイル枠
                   val thumbContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply {
                           topMargin = 6.dp()
@@ -241,7 +225,7 @@ jobs:
                   thumbContainer.addView(tvImageInfo)
                   rootLayout.addView(thumbContainer)
 
-                  // 3. 中段ボタン行
+                  // 3. 中段ボタン（国土地理院 / Googleマップ）
                   val midRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply {
@@ -278,7 +262,7 @@ jobs:
                   }
                   rootLayout.addView(mapWebView)
 
-                  // 5. 最下部ボタン行
+                  // 5. 下段ボタン（次ファイル / 前ファイル）
                   val btmRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
@@ -386,7 +370,7 @@ jobs:
                                           weight: 3
                                       }).addTo(markerLayer);
 
-                                      // 縮尺（ズーム倍率）を維持したままパン移動
+                                      // 縮尺は固定してパン移動
                                       map.panTo([targetLat, targetLon], { animate: true, duration: 0.4 });
                                   }
                               }
@@ -532,7 +516,9 @@ jobs:
           EOF
 
       - name: APKのビルド
-        run: gradle assembleDebug --stacktrace
+        run: |
+          gradle wrapper --gradle-version 8.5
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: 完成したAPKをアーティファクトに保存
         uses: actions/upload-artifact@v4

@@ -9,13 +9,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Java 17 のセットアップ (最新v5版)
+      - name: Java 17 のセットアップ
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Gradle のセットアップ (最新v4版)
+      - name: Gradle のセットアップ
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.5'
@@ -31,8 +31,8 @@ jobs:
           mkdir -p app/src/main/java/com/example/photomapviewer
           mkdir -p app/src/main/res/values
 
-          # 1. settings.gradle
-          cat << 'EOF' > settings.gradle
+          # 1. settings.gradle.kts (Kotlin DSLによる厳密な設定)
+          cat << 'EOF' > settings.gradle.kts
           pluginManagement {
               repositories {
                   google()
@@ -48,55 +48,55 @@ jobs:
               }
           }
           rootProject.name = "PhotoMapViewer"
-          include ':app'
+          include(":app")
           EOF
 
-          # 2. build.gradle (Root)
-          cat << 'EOF' > build.gradle
+          # 2. build.gradle.kts (Root)
+          cat << 'EOF' > build.gradle.kts
           plugins {
-              id 'com.android.application' version '8.2.2' apply false
-              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
           }
           EOF
 
-          # 3. app/build.gradle
-          cat << 'EOF' > app/build.gradle
+          # 3. app/build.gradle.kts
+          cat << 'EOF' > app/build.gradle.kts
           plugins {
-              id 'com.android.application'
-              id 'org.jetbrains.kotlin.android'
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
           }
 
           android {
-              namespace 'com.example.photomapviewer'
-              compileSdk 34
+              namespace = "com.example.photomapviewer"
+              compileSdk = 34
 
               defaultConfig {
-                  applicationId "com.example.photomapviewer"
-                  minSdk 26
-                  targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
+                  applicationId = "com.example.photomapviewer"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
               }
 
               buildTypes {
                   release {
-                      isMinifyEnabled false
+                      isMinifyEnabled = false
                   }
               }
               compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
               }
               kotlinOptions {
-                  jvmTarget = '17'
+                  jvmTarget = "17"
               }
           }
 
           dependencies {
-              implementation 'androidx.core:core-ktx:1.12.0'
-              implementation 'androidx.appcompat:appcompat:1.6.1'
-              implementation 'androidx.exifinterface:exifinterface:1.3.7'
-              implementation 'androidx.documentfile:documentfile:1.0.1'
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("androidx.exifinterface:exifinterface:1.3.7")
+              implementation("androidx.documentfile:documentfile:1.0.1")
           }
           EOF
 
@@ -525,14 +525,12 @@ jobs:
           }
           EOF
 
-      - name: APKのビルド（エラー検知機能つき）
+      - name: APKのビルド（確実にログを記録）
         id: build_step
-        run: |
-          gradle wrapper --gradle-version 8.5
-          ./gradlew assembleDebug --stacktrace > build_log.txt 2>&1
+        run: gradle assembleDebug --stacktrace > build_log.txt 2>&1
         continue-on-error: true
 
-      - name: 📝 失敗原因の保存（ビルドログ）
+      - name: 📝 ビルドログの保存
         uses: actions/upload-artifact@v4
         with:
           name: Build-Log
@@ -547,4 +545,6 @@ jobs:
 
       - name: エラー判定（失敗時はここで停止）
         if: steps.build_step.outcome != 'success'
-        run: exit 1
+        run: |
+          cat build_log.txt
+          exit 1

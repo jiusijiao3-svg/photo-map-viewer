@@ -65,7 +65,7 @@ jobs:
           }
           EOF
 
-          # 4. app/build.gradle.kts
+          # 4. app/build.gradle.kts (Coroutines & Lifecycle追加)
           cat << 'EOF' > app/build.gradle.kts
           plugins {
               id("com.android.application")
@@ -103,6 +103,8 @@ jobs:
               implementation("androidx.appcompat:appcompat:1.6.1")
               implementation("androidx.exifinterface:exifinterface:1.3.7")
               implementation("androidx.documentfile:documentfile:1.0.1")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+              implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
           }
           EOF
 
@@ -144,6 +146,7 @@ jobs:
 
           import android.Manifest
           import android.annotation.SuppressLint
+          import android.content.Context
           import android.content.Intent
           import android.content.pm.PackageManager
           import android.graphics.BitmapFactory
@@ -154,6 +157,8 @@ jobs:
           import android.view.Gravity
           import android.view.ViewGroup
           import android.webkit.JavascriptInterface
+          import android.webkit.WebResourceRequest
+          import android.webkit.WebResourceResponse
           import android.webkit.WebView
           import android.webkit.WebViewClient
           import android.widget.Button
@@ -168,8 +173,18 @@ jobs:
           import androidx.core.content.ContextCompat
           import androidx.documentfile.provider.DocumentFile
           import androidx.exifinterface.media.ExifInterface
+          import androidx.lifecycle.lifecycleScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
           import org.json.JSONArray
           import org.json.JSONObject
+          import java.io.ByteArrayInputStream
+          import java.io.File
+          import java.io.FileInputStream
+          import java.io.FileOutputStream
+          import java.net.HttpURLConnection
+          import java.net.URL
 
           class MainActivity : AppCompatActivity() {
 
@@ -186,9 +201,9 @@ jobs:
               private var currentIndex = 0
               private var isMapReady = false
 
-              // 設定状態
-              private var isSortDesc = true        // true: 新しい順, false: 古い順
-              private var limitMapPins = true      // true: 上から50枚, false: 全て
+              // 設定
+              private var isSortDesc = true
+              private var limitMapPins = true
 
               private lateinit var ivThumbnail: ImageView
               private lateinit var tvImageInfo: TextView
@@ -229,7 +244,7 @@ jobs:
                       )
                   }
 
-                  // 1. 最上部バー（[≡ 設定] [📁 フォルダ選択]）
+                  // 1. 最上部バー
                   val topRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
@@ -284,7 +299,7 @@ jobs:
                   thumbContainer.addView(tvImageInfo)
                   rootLayout.addView(thumbContainer)
 
-                  // 3. 中段ボタン（国土地理院 / Googleマップ）
+                  // 3. 中段ボタン
                   val midRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply {
@@ -321,7 +336,7 @@ jobs:
                   }
                   rootLayout.addView(mapWebView)
 
-                  // 5. 下段ボタン（[◀ 新しい写真] [古い写真 ▶]）
+                  // 5. 下段ボタン
                   val btmRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
@@ -334,7 +349,6 @@ jobs:
                       setTextColor(Color.WHITE)
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }
                       setOnClickListener {
-                          // 新しい写真へ移動
                           val targetIndex = if (isSortDesc) currentIndex - 1 else currentIndex + 1
                           navigateTo(targetIndex)
                       }
@@ -346,7 +360,6 @@ jobs:
                       setTextColor(Color.WHITE)
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = 4.dp() }
                       setOnClickListener {
-                          // 古い写真へ移動
                           val targetIndex = if (isSortDesc) currentIndex + 1 else currentIndex - 1
                           navigateTo(targetIndex)
                       }
@@ -363,7 +376,8 @@ jobs:
               private fun showSettingsDialog() {
                   val items = arrayOf(
                       "ファイル並び順: ${if (isSortDesc) "新しい順 (降順)" else "古い順 (昇順)"}",
-                      "地図ピン表示: ${if (limitMapPins) "上から50枚のみ" else "全件表示"}"
+                      "地図ピン表示: ${if (limitMapPins) "上から50枚のみ" else "全件表示"}",
+                      "地図タイルキャッシュ消去"
                   )
 
                   AlertDialog.Builder(this)
@@ -372,10 +386,23 @@ jobs:
                           when (which) {
                               0 -> showSortDialog()
                               1 -> showPinLimitDialog()
+                              2 -> clearTileCache()
                           }
                       }
                       .setNegativeButton("閉じる", null)
                       .show()
+              }
+
+              private fun clearTileCache() {
+                  lifecycleScope.launch(Dispatchers.IO) {
+                      val tileDir = File(cacheDir, "tiles")
+                      if (tileDir.exists()) {
+                          tileDir.deleteRecursively()
+                      }
+                      withContext(Dispatchers.Main) {
+                          Toast.makeText(this@MainActivity, "地図キャッシュを消去しました", Toast.LENGTH_SHORT).show()
+                      }
+                  }
               }
 
               private fun showSortDialog() {
@@ -438,10 +465,45 @@ jobs:
                   mapWebView.settings.domStorageEnabled = true
                   mapWebView.addJavascriptInterface(WebAppInterface(), "Android")
 
+                  // 地理院タイルのオフラインキャッシュインターセプト
                   mapWebView.webViewClient = object : WebViewClient() {
                       override fun onPageFinished(view: WebView?, url: String?) {
                           isMapReady = true
                           renderCurrentPhotoOnMap()
+                      }
+
+                      override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                          val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
+                          if (url.contains("cyberjapandata.gsi.go.jp")) {
+                              try {
+                                  val tileDir = File(cacheDir, "tiles")
+                                  if (!tileDir.exists()) tileDir.mkdirs()
+
+                                  val fileName = url.hashCode().toString() + if (url.endsWith(".png")) ".png" else ".jpg"
+                                  val cacheFile = File(tileDir, fileName)
+
+                                  // キャッシュが存在する場合はローカルファイルを即返却
+                                  if (cacheFile.exists() && cacheFile.length() > 0) {
+                                      val mime = if (url.endsWith(".png")) "image/png" else "image/jpeg"
+                                      return WebResourceResponse(mime, "UTF-8", FileInputStream(cacheFile))
+                                  }
+
+                                  // キャッシュが無い場合はダウンロードして次回用に保存
+                                  val conn = URL(url).openConnection() as HttpURLConnection
+                                  conn.connectTimeout = 4000
+                                  conn.readTimeout = 4000
+                                  conn.connect()
+                                  if (conn.responseCode == 200) {
+                                      val bytes = conn.inputStream.readBytes()
+                                      FileOutputStream(cacheFile).use { it.write(bytes) }
+                                      val mime = if (url.endsWith(".png")) "image/png" else "image/jpeg"
+                                      return WebResourceResponse(mime, "UTF-8", ByteArrayInputStream(bytes))
+                                  }
+                              } catch (e: Exception) {
+                                  // オフラインかつ未キャッシュの場合はフォールバック
+                              }
+                          }
+                          return super.shouldInterceptRequest(view, request)
                       }
                   }
 
@@ -520,46 +582,82 @@ jobs:
                   mapWebView.loadDataWithBaseURL("https://maps.gsi.go.jp", htmlContent, "text/html", "UTF-8", null)
               }
 
+              // 非同期 ＆ キャッシュ付きフォルダ読み込み
               private fun loadPhotosFromFolder(folderUri: Uri) {
-                  val rootDoc = DocumentFile.fromTreeUri(this, folderUri) ?: return
-                  val files = rootDoc.listFiles()
+                  lifecycleScope.launch {
+                      tvImageInfo.text = "フォルダ内を検索中..."
+                      ivThumbnail.setImageDrawable(null)
 
-                  photoList.clear()
-                  for (file in files) {
-                      if (file.isFile && (file.name?.endsWith(".jpg", true) == true || file.name?.endsWith(".jpeg", true) == true)) {
-                          val item = PhotoItem(file.uri, file.name ?: "", file.lastModified())
-                          try {
-                              contentResolver.openFileDescriptor(file.uri, "r")?.use { pfd ->
-                                  val exif = ExifInterface(pfd.fileDescriptor)
-                                  val latLong = FloatArray(2)
-                                  if (exif.getLatLong(latLong)) {
-                                      item.lat = latLong[0].toDouble()
-                                      item.lon = latLong[1].toDouble()
-                                      item.debugStatus = "OK"
+                      val files = withContext(Dispatchers.IO) {
+                          val rootDoc = DocumentFile.fromTreeUri(this@MainActivity, folderUri)
+                          rootDoc?.listFiles()?.filter {
+                              it.isFile && (it.name?.endsWith(".jpg", true) == true || it.name?.endsWith(".jpeg", true) == true)
+                          } ?: emptyList()
+                      }
+
+                      if (files.isEmpty()) {
+                          Toast.makeText(this@MainActivity, "写真が見つかりませんでした", Toast.LENGTH_SHORT).show()
+                          tvImageInfo.text = "写真なし"
+                          return@launch
+                      }
+
+                      photoList.clear()
+                      val total = files.size
+
+                      withContext(Dispatchers.IO) {
+                          val prefs = getSharedPreferences("exif_metadata_cache", Context.MODE_PRIVATE)
+                          val editor = prefs.edit()
+
+                          files.forEachIndexed { idx, file ->
+                              val item = PhotoItem(file.uri, file.name ?: "", file.lastModified())
+                              val cacheKey = "${file.name}_${file.lastModified()}"
+                              val cachedData = prefs.getString(cacheKey, null)
+
+                              if (cachedData != null) {
+                                  // メタデータキャッシュから即時復帰
+                                  if (cachedData != "NO_GPS") {
+                                      val parts = cachedData.split(",")
+                                      if (parts.size >= 2) {
+                                          item.lat = parts[0].toDoubleOrNull()
+                                          item.lon = parts[1].toDoubleOrNull()
+                                          item.debugStatus = "OK"
+                                      }
                                   } else {
-                                      val rawLat = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE)
-                                      item.debugStatus = if (rawLat != null) "RawGPSあり" else "GPSタグなし"
+                                      item.debugStatus = "GPSタグなし"
+                                  }
+                              } else {
+                                  // 未キャッシュ時のみExif解析を行いキャッシュへ記録
+                                  try {
+                                      contentResolver.openFileDescriptor(file.uri, "r")?.use { pfd ->
+                                          val exif = ExifInterface(pfd.fileDescriptor)
+                                          val latLong = FloatArray(2)
+                                          if (exif.getLatLong(latLong)) {
+                                              item.lat = latLong[0].toDouble()
+                                              item.lon = latLong[1].toDouble()
+                                              item.debugStatus = "OK"
+                                              editor.putString(cacheKey, "${item.lat},${item.lon}")
+                                          } else {
+                                              item.debugStatus = "GPSタグなし"
+                                              editor.putString(cacheKey, "NO_GPS")
+                                          }
+                                      }
+                                  } catch (e: Exception) {
+                                      item.debugStatus = "例外"
                                   }
                               }
-                          } catch (e: Exception) {
-                              item.debugStatus = "例外"
+                              photoList.add(item)
+
+                              // メインスレッドへ進捗を通知（5件ごとまたは完了時）
+                              if (idx % 5 == 0 || idx == total - 1) {
+                                  withContext(Dispatchers.Main) {
+                                      tvImageInfo.text = "写真を解析中... [${idx + 1}/$total]"
+                                  }
+                              }
                           }
-                          photoList.add(item)
+                          editor.apply()
                       }
-                  }
 
-                  // 設定に応じたソートを適用
-                  if (isSortDesc) {
-                      photoList.sortByDescending { it.lastModified }
-                  } else {
-                      photoList.sortBy { it.lastModified }
-                  }
-
-                  if (photoList.isNotEmpty()) {
-                      currentIndex = 0
-                      displayPhoto(currentIndex)
-                  } else {
-                      Toast.makeText(this, "写真が見つかりませんでした", Toast.LENGTH_SHORT).show()
+                      applySort()
                   }
               }
 
@@ -591,7 +689,6 @@ jobs:
                   }
                   tvImageInfo.text = "[${index + 1}/${photoList.size}] ${item.name}\n$gpsText"
 
-                  // ボタンの有効／無効判定
                   val canGoNewer = if (isSortDesc) index > 0 else index < photoList.size - 1
                   val canGoOlder = if (isSortDesc) index < photoList.size - 1 else index > 0
 
@@ -611,7 +708,6 @@ jobs:
                   val current = photoList[currentIndex]
                   val jsonArray = JSONArray()
 
-                  // ピン表示制限の適用（50枚 or 全件）
                   val targets = if (limitMapPins) photoList.take(50) else photoList
 
                   targets.forEach { p ->

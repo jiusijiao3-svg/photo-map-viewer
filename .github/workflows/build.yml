@@ -31,7 +31,13 @@ jobs:
           mkdir -p app/src/main/java/com/example/photomapviewer
           mkdir -p app/src/main/res/values
 
-          # 1. settings.gradle.kts (Kotlin DSLによる厳密な設定)
+          # ★エラーの原因だった設定ファイルを追加
+          cat << 'EOF' > gradle.properties
+          android.useAndroidX=true
+          android.enableJetifier=true
+          EOF
+
+          # 1. settings.gradle.kts
           cat << 'EOF' > settings.gradle.kts
           pluginManagement {
               repositories {

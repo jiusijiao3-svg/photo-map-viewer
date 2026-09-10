@@ -209,11 +209,11 @@ jobs:
               private var currentIndex = 0
               private var isMapReady = false
 
-              // 設定値（SharedPreferencesで永続化）
+              // 設定値
               private var isSortDesc = true
-              private var pinLimitCount = 50   // 50, 100, -1(全て), または任意入力値
-              private var cacheLimitMb = 100   // 50, 100, 250, 500, -1(無制限)
-              private var startupMode = 0      // 0: 前回最後の写真, 1: フォルダ先頭, 2: 自動で開かない
+              private var pinLimitCount = 50
+              private var cacheLimitMb = 100
+              private var startupMode = 0
 
               private lateinit var ivThumbnail: ImageView
               private lateinit var tvImageInfo: TextView
@@ -229,10 +229,10 @@ jobs:
 
               private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
 
-              // メモリキャッシュ（サムネイル用）
+              // メモリキャッシュ
               private val memoryCache: LruCache<String, Bitmap> by lazy {
-                  val maxMemory = (Runtime.getRuntime().maxMemory() / 1024).toInt()
-                  val cacheSize = maxMemory / 8
+                  val maxMem = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
+                  val cacheSize = maxOf(1024, maxMem / 8)
                   object : LruCache<String, Bitmap>(cacheSize) {
                       override fun sizeOf(key: String, bitmap: Bitmap): Int = bitmap.byteCount / 1024
                   }
@@ -324,7 +324,7 @@ jobs:
                   topRow.addView(btnSelectFolder)
                   mainLayout.addView(topRow)
 
-                  // 2. サムネイル枠（タップで全画面表示）
+                  // 2. サムネイル枠
                   val thumbContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply {
                           topMargin = 6.dp()
@@ -470,7 +470,7 @@ jobs:
               }
 
               private fun checkAutoResume() {
-                  if (startupMode == 2) return // 自動で開かない
+                  if (startupMode == 2) return
                   val prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
                   val lastFolder = prefs.getString("last_folder_uri", null) ?: return
                   val lastPhoto = prefs.getString("last_photo_name", null)
@@ -483,7 +483,6 @@ jobs:
                   }
               }
 
-              // --- ハンバーガーメニュー階層化 ---
               private fun showMainMenu() {
                   val items = arrayOf(
                       "📁 ファイル操作 ▶",
@@ -506,7 +505,6 @@ jobs:
                       .show()
               }
 
-              // 1. ファイル操作サブメニュー
               private fun showFileMenu() {
                   val sortLabel = if (isSortDesc) "新しい順 (降順)" else "古い順 (昇順)"
                   val items = arrayOf(
@@ -527,7 +525,6 @@ jobs:
                       .show()
               }
 
-              // サムネイル一覧（3列グリッドダイアログ）
               private fun showThumbnailGridPicker() {
                   if (photoList.isEmpty()) {
                       Toast.makeText(this, "先にフォルダを選択してください", Toast.LENGTH_SHORT).show()
@@ -546,11 +543,7 @@ jobs:
                   }
                   dialogView.addView(gridView)
 
-                  val dialog = AlertDialog.Builder(this)
-                      .setTitle("写真を選択 (全${photoList.size}枚)")
-                      .setView(dialogView)
-                      .setNegativeButton("キャンセル", null)
-                      .create()
+                  var dialogRef: AlertDialog? = null
 
                   val cellSize = (resources.displayMetrics.widthPixels - 36.dp()) / 3
 
@@ -591,7 +584,6 @@ jobs:
                           val item = photoList[position]
                           badge.text = "${position + 1}${if (item.lat != null) " 📍" else ""}"
 
-                          // 現在選択中の写真は青枠をつける
                           if (position == currentIndex) {
                               frame.setPadding(3.dp(), 3.dp(), 3.dp(), 3.dp())
                               frame.setBackgroundColor(Color.parseColor("#0066FF"))
@@ -621,7 +613,7 @@ jobs:
                           }
 
                           frame.setOnClickListener {
-                              dialog.dismiss()
+                              dialogRef?.dismiss()
                               navigateTo(position)
                           }
 
@@ -629,10 +621,16 @@ jobs:
                       }
                   }
 
-                  dialog.show()
+                  val builtDialog = AlertDialog.Builder(this)
+                      .setTitle("写真を選択 (全${photoList.size}枚)")
+                      .setView(dialogView)
+                      .setNegativeButton("キャンセル", null)
+                      .create()
+
+                  dialogRef = builtDialog
+                  builtDialog.show()
               }
 
-              // ファイル名一覧選択
               private fun showFileNamePicker() {
                   if (photoList.isEmpty()) {
                       Toast.makeText(this, "先にフォルダを選択してください", Toast.LENGTH_SHORT).show()
@@ -665,7 +663,6 @@ jobs:
                       .show()
               }
 
-              // 2. 地図ピン表示サブメニュー
               private fun showPinMenu() {
                   val options = arrayOf(
                       "50枚",
@@ -726,7 +723,6 @@ jobs:
                       .show()
               }
 
-              // 3. キャッシュ管理サブメニュー
               private fun showCacheMenu() {
                   val limitStr = if (cacheLimitMb > 0) "${cacheLimitMb} MB" else "無制限"
                   val items = arrayOf(
@@ -780,7 +776,6 @@ jobs:
                   Toast.makeText(this, "Exifキャッシュを消去しました (次回フル解析)", Toast.LENGTH_SHORT).show()
               }
 
-              // 4. 起動時設定サブメニュー
               private fun showStartupMenu() {
                   val options = arrayOf(
                       "前回最後に見ていた写真を開く",
@@ -798,7 +793,6 @@ jobs:
                       .show()
               }
 
-              // --- 全画面表示 ---
               private fun openFullScreen() {
                   if (photoList.isEmpty()) return
                   val item = photoList.getOrNull(currentIndex) ?: return
@@ -835,9 +829,16 @@ jobs:
                           val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                           BitmapFactory.decodeStream(stream, null, options)
 
+                          val rawWidth = options.outWidth
+                          val rawHeight = options.outHeight
+
                           var inSample = 1
-                          while (options.outWidth / inSample > reqWidth || options.outHeight / inSample > reqHeight) {
-                              inSample *= 2
+                          if (rawWidth > reqWidth || rawHeight > reqHeight) {
+                              val halfWidth = rawWidth / 2
+                              val halfHeight = rawHeight / 2
+                              while ((halfWidth / inSample) >= reqWidth && (halfHeight / inSample) >= reqHeight) {
+                                  inSample *= 2
+                              }
                           }
 
                           val decodeOpts = BitmapFactory.Options().apply { inSampleSize = inSample }
@@ -1095,7 +1096,6 @@ jobs:
 
                       applySort()
 
-                      // 復元先の指定があればそこへジャンプ
                       if (restorePhotoName != null) {
                           val foundIdx = photoList.indexOfFirst { it.name == restorePhotoName }
                           if (foundIdx != -1) {
@@ -1133,11 +1133,9 @@ jobs:
               private fun displayPhoto(index: Int) {
                   val item = photoList[index]
 
-                  // 前回閲覧位置として保存
                   getSharedPreferences("app_settings", Context.MODE_PRIVATE)
                       .edit().putString("last_photo_name", item.name).apply()
 
-                  // メモリキャッシュを活用してサムネイル表示
                   val cacheKey = "${item.uri}_main"
                   val cachedBmp = memoryCache.get(cacheKey)
                   if (cachedBmp != null) {
@@ -1182,7 +1180,6 @@ jobs:
                   val current = photoList[currentIndex]
                   val jsonArray = JSONArray()
 
-                  // ピン表示件数の適用
                   val targets = if (pinLimitCount > 0) photoList.take(pinLimitCount) else photoList
 
                   targets.forEach { p ->

@@ -146,7 +146,6 @@ jobs:
 
           import android.Manifest
           import android.annotation.SuppressLint
-          import android.app.Dialog
           import android.content.Context
           import android.content.Intent
           import android.content.pm.PackageManager
@@ -156,6 +155,7 @@ jobs:
           import android.os.Build
           import android.os.Bundle
           import android.view.Gravity
+          import android.view.View
           import android.view.ViewGroup
           import android.webkit.JavascriptInterface
           import android.webkit.WebResourceRequest
@@ -214,6 +214,10 @@ jobs:
               private lateinit var btnGsi: Button
               private lateinit var btnGoogleMap: Button
 
+              // 全画面オーバーレイ用
+              private lateinit var fullContainer: FrameLayout
+              private lateinit var fullImageView: ImageView
+
               private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
 
               private val permissionLauncher = registerForActivityResult(
@@ -235,11 +239,19 @@ jobs:
 
                   checkPermissions()
 
-                  val rootLayout = LinearLayout(this).apply {
+                  // 最上位コンテナ（通常画面と全画面オーバーレイを重ねる）
+                  val rootContainer = FrameLayout(this).apply {
+                      layoutParams = ViewGroup.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.MATCH_PARENT
+                      )
+                  }
+
+                  val mainLayout = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setBackgroundColor(Color.parseColor("#121212"))
                       setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
-                      layoutParams = ViewGroup.LayoutParams(
+                      layoutParams = FrameLayout.LayoutParams(
                           ViewGroup.LayoutParams.MATCH_PARENT,
                           ViewGroup.LayoutParams.MATCH_PARENT
                       )
@@ -272,20 +284,23 @@ jobs:
                       setOnClickListener { folderPicker.launch(null) }
                   }
                   topRow.addView(btnSelectFolder)
-                  rootLayout.addView(topRow)
+                  mainLayout.addView(topRow)
 
-                  // 2. サムネイル枠（タップで全画面表示）
+                  // 2. サムネイル枠（枠全体・画像どちらをタップしても全画面化）
                   val thumbContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply {
                           topMargin = 6.dp()
                       }
                       setBackgroundColor(Color.BLACK)
+                      isClickable = true
+                      isFocusable = true
+                      setOnClickListener { openFullScreen() }
                   }
 
                   ivThumbnail = ImageView(this).apply {
                       layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                       scaleType = ImageView.ScaleType.FIT_CENTER
-                      setOnClickListener { showFullScreenPhoto() }
+                      setOnClickListener { openFullScreen() }
                   }
                   thumbContainer.addView(ivThumbnail)
 
@@ -299,7 +314,7 @@ jobs:
                       }
                   }
                   thumbContainer.addView(tvImageInfo)
-                  rootLayout.addView(thumbContainer)
+                  mainLayout.addView(thumbContainer)
 
                   // 3. 中段ボタン
                   val midRow = LinearLayout(this).apply {
@@ -327,7 +342,7 @@ jobs:
                   }
                   midRow.addView(btnGsi)
                   midRow.addView(btnGoogleMap)
-                  rootLayout.addView(midRow)
+                  mainLayout.addView(midRow)
 
                   // 4. 地図ビュー
                   mapWebView = WebView(this).apply {
@@ -336,7 +351,7 @@ jobs:
                           bottomMargin = 6.dp()
                       }
                   }
-                  rootLayout.addView(mapWebView)
+                  mainLayout.addView(mapWebView)
 
                   // 5. 下段ボタン
                   val btmRow = LinearLayout(this).apply {
@@ -368,54 +383,75 @@ jobs:
                   }
                   btmRow.addView(btnNewer)
                   btmRow.addView(btnOlder)
-                  rootLayout.addView(btmRow)
+                  mainLayout.addView(btmRow)
 
-                  setContentView(rootLayout)
+                  rootContainer.addView(mainLayout)
 
-                  setupWebView()
-              }
+                  // 6. 最前面・全画面表示レイアウト（初期状態は非表示）
+                  fullContainer = FrameLayout(this).apply {
+                      layoutParams = FrameLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.MATCH_PARENT
+                      )
+                      setBackgroundColor(Color.BLACK)
+                      visibility = View.GONE
+                      setOnClickListener { closeFullScreen() }
+                  }
 
-              // サムネイルタップ時の全画面表示
-              private fun showFullScreenPhoto() {
-                  if (photoList.isEmpty()) return
-                  val item = photoList.getOrNull(currentIndex) ?: return
-
-                  // システムナビゲーションバー（▽など）を残した黒背景フルスクリーンダイアログ
-                  val fullDialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar)
-                  val fullImageView = ImageView(this).apply {
-                      layoutParams = ViewGroup.LayoutParams(
+                  fullImageView = ImageView(this).apply {
+                      layoutParams = FrameLayout.LayoutParams(
                           ViewGroup.LayoutParams.MATCH_PARENT,
                           ViewGroup.LayoutParams.MATCH_PARENT
                       )
                       scaleType = ImageView.ScaleType.FIT_CENTER
-                      setBackgroundColor(Color.BLACK)
-                      // 画面タップでも戻る
-                      setOnClickListener { fullDialog.dismiss() }
+                      setOnClickListener { closeFullScreen() }
                   }
-                  fullDialog.setContentView(fullImageView)
+                  fullContainer.addView(fullImageView)
+                  rootContainer.addView(fullContainer)
 
-                  // 高画質デコード（OOM対策を施して滑らかに表示）
-                  try {
-                      contentResolver.openInputStream(item.uri)?.use { boundsStream ->
-                          val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                          BitmapFactory.decodeStream(boundsStream, null, options)
+                  setContentView(rootContainer)
 
-                          var inSample = 1
-                          val maxDim = maxOf(options.outWidth, options.outHeight)
-                          while (maxDim / inSample > 3840) {
-                              inSample *= 2
+                  setupWebView()
+              }
+
+              // 全画面を開く
+              private fun openFullScreen() {
+                  if (photoList.isEmpty()) return
+                  val item = photoList.getOrNull(currentIndex) ?: return
+
+                  // まず表示済みのサムネイルをセットして即座に画面を切り替える
+                  ivThumbnail.drawable?.let { fullImageView.setImageDrawable(it) }
+                  fullContainer.visibility = View.VISIBLE
+
+                  // バックグラウンドで高解像度画像をデコードして差し替え
+                  lifecycleScope.launch(Dispatchers.IO) {
+                      try {
+                          contentResolver.openInputStream(item.uri)?.use { stream ->
+                              val options = BitmapFactory.Options().apply { inSampleSize = 2 }
+                              val bmp = BitmapFactory.decodeStream(stream, null, options)
+                              withContext(Dispatchers.Main) {
+                                  if (fullContainer.visibility == View.VISIBLE && bmp != null) {
+                                      fullImageView.setImageBitmap(bmp)
+                                  }
+                              }
                           }
-
-                          val decodeOptions = BitmapFactory.Options().apply { inSampleSize = inSample }
-                          contentResolver.openInputStream(item.uri)?.use { imageStream ->
-                              val bmp = BitmapFactory.decodeStream(imageStream, null, decodeOptions)
-                              fullImageView.setImageBitmap(bmp)
-                          }
-                      }
-                      fullDialog.show()
-                  } catch (e: Exception) {
-                      Toast.makeText(this, "画像の拡大表示に失敗しました", Toast.LENGTH_SHORT).show()
+                      } catch (e: Throwable) { }
                   }
+              }
+
+              // 全画面を閉じる
+              private fun closeFullScreen() {
+                  fullContainer.visibility = View.GONE
+              }
+
+              // アンドロイド下部の「▽（戻るボタン）」対応
+              @Deprecated("Deprecated in Java")
+              override fun onBackPressed() {
+                  if (::fullContainer.isInitialized && fullContainer.visibility == View.VISIBLE) {
+                      closeFullScreen()
+                      return
+                  }
+                  super.onBackPressed()
               }
 
               private fun showSettingsDialog() {
@@ -618,10 +654,8 @@ jobs:
                                   markerLayer.clearLayers();
                                   var points = JSON.parse(allPointsJson);
 
-                                  // 赤丸マーカー（他写真）
                                   points.forEach(function(p) {
                                       if (p.hasGps && !p.isCurrent) {
-                                          // 表示用の赤い点
                                           L.circleMarker([p.lat, p.lon], {
                                               radius: 7,
                                               color: '#ff3333',
@@ -630,7 +664,6 @@ jobs:
                                               weight: 2
                                           }).addTo(markerLayer);
 
-                                          // タップしやすい透明な拡大当たり判定円 (半径22px)
                                           var hitArea = L.circleMarker([p.lat, p.lon], {
                                               radius: 22,
                                               opacity: 0,
@@ -643,7 +676,6 @@ jobs:
                                       }
                                   });
 
-                                  // 青丸マーカー（選択中写真）
                                   if (hasCoords) {
                                       L.circleMarker([targetLat, targetLon], {
                                           radius: 10,

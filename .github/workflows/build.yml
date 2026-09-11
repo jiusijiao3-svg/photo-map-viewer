@@ -112,7 +112,7 @@ jobs:
               implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
               implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
               
-              // CameraX (16KBページサイズ問題解決済みの 1.4.1 をハードコードで指定)
+              // CameraX
               implementation("androidx.camera:camera-core:1.4.1")
               implementation("androidx.camera:camera-camera2:1.4.1")
               implementation("androidx.camera:camera-lifecycle:1.4.1")
@@ -317,7 +317,8 @@ jobs:
 
               private lateinit var fullContainer: FrameLayout
               private lateinit var fullImageView: ImageView
-              private lateinit var gestureDetector: GestureDetector
+              private lateinit var gestureDetectorFull: GestureDetector
+              private lateinit var gestureDetectorThumb: GestureDetector
 
               private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
 
@@ -420,12 +421,15 @@ jobs:
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply { topMargin = 6.dp() }
                   }
 
+                  // サムネイルのスワイプ処理
+                  setupThumbGestureDetector()
+
                   thumbContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                       setBackgroundColor(Color.BLACK)
                       isClickable = true
                       isFocusable = true
-                      setOnClickListener { if (!isCameraMode) openFullScreen() }
+                      setOnTouchListener { _, event -> gestureDetectorThumb.onTouchEvent(event); true }
                   }
 
                   viewFinder = PreviewView(this).apply {
@@ -437,7 +441,6 @@ jobs:
                   ivThumbnail = ImageView(this).apply {
                       layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                       scaleType = ImageView.ScaleType.FIT_CENTER
-                      setOnClickListener { if (!isCameraMode) openFullScreen() }
                   }
                   thumbContainer.addView(ivThumbnail)
 
@@ -561,13 +564,13 @@ jobs:
                   rootContainer.addView(mainLayout)
 
                   // 全画面レイアウト
-                  setupGestureDetector()
+                  setupFullGestureDetector()
 
                   fullContainer = FrameLayout(this).apply {
                       layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                       setBackgroundColor(Color.BLACK)
                       visibility = View.GONE
-                      setOnTouchListener { _, event -> gestureDetector.onTouchEvent(event); true }
+                      setOnTouchListener { _, event -> gestureDetectorFull.onTouchEvent(event); true }
                   }
 
                   fullImageView = ImageView(this).apply {
@@ -662,7 +665,7 @@ jobs:
                           mapWebView.evaluateJavascript("toggleCameraMode(false);", null)
                       }
                       stopLocationTracking()
-                      if (photoList.isNotEmpty() && currentFolderUri != null) displayPhoto(currentIndex)
+                      if (photoList.isNotEmpty()) displayPhoto(currentIndex)
                   }
               }
 
@@ -674,7 +677,6 @@ jobs:
                           val preview = Preview.Builder().build().also {
                               it.setSurfaceProvider(viewFinder.surfaceProvider)
                           }
-                          // 警告回避のため、一旦ローカル変数で宣言してから使用する
                           val capture = ImageCapture.Builder().build()
                           imageCapture = capture
                           val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -745,7 +747,6 @@ jobs:
                                                   }
                                                   withContext(Dispatchers.Main) {
                                                       Toast.makeText(this@MainActivity, "保存完了: $newFileName", Toast.LENGTH_SHORT).show()
-                                                      toggleCameraMode()
                                                       loadPhotosUltraFast(currentFolderUri!!, newFileName)
                                                   }
                                               }
@@ -766,8 +767,7 @@ jobs:
                                                       }
                                                   }
                                                   withContext(Dispatchers.Main) {
-                                                      Toast.makeText(this@MainActivity, "標準カメラフォルダに保存しました\n$newFileName", Toast.LENGTH_LONG).show()
-                                                      toggleCameraMode()
+                                                      Toast.makeText(this@MainActivity, "標準フォルダに保存しました\n$newFileName", Toast.LENGTH_SHORT).show()
                                                   }
                                               }
                                           }
@@ -852,9 +852,46 @@ jobs:
                   }
               }
 
-              // --- スワイプ検知 ---
-              private fun setupGestureDetector() {
-                  gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+              // --- サムネイル用スワイプ検知 ---
+              private fun setupThumbGestureDetector() {
+                  gestureDetectorThumb = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                      private val SWIPE_THRESHOLD = 50
+                      private val SWIPE_VELOCITY_THRESHOLD = 50
+
+                      override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                          if (e1 == null) return false
+                          if (isCameraMode || photoList.isEmpty()) return false
+
+                          val diffX = e2.x - e1.x
+                          val diffY = e2.y - e1.y
+
+                          if (abs(diffX) > abs(diffY)) {
+                              if (abs(diffX) > SWIPE_THRESHOLD && abs(velocityX) > SWIPE_VELOCITY_THRESHOLD) {
+                                  val t = if (diffX > 0) { if (isSortDesc) currentIndex - 1 else currentIndex + 1 } 
+                                          else { if (isSortDesc) currentIndex + 1 else currentIndex - 1 }
+                                  if (t in 0 until photoList.size) navigateTo(t)
+                                  return true
+                              }
+                          } else {
+                              if (abs(diffY) > SWIPE_THRESHOLD && abs(velocityY) > SWIPE_VELOCITY_THRESHOLD) {
+                                  val t = if (diffY > 0) { if (isSortDesc) currentIndex - 1 else currentIndex + 1 } 
+                                          else { if (isSortDesc) currentIndex + 1 else currentIndex - 1 }
+                                  if (t in 0 until photoList.size) navigateTo(t)
+                                  return true
+                              }
+                          }
+                          return false
+                      }
+                      override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                          if (!isCameraMode) openFullScreen()
+                          return true
+                      }
+                  })
+              }
+
+              // --- 全画面用スワイプ検知 ---
+              private fun setupFullGestureDetector() {
+                  gestureDetectorFull = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
                       private val SWIPE_THRESHOLD = 100
                       private val SWIPE_VELOCITY_THRESHOLD = 100
 
@@ -862,15 +899,19 @@ jobs:
                           if (e1 == null) return false
                           val diffX = e2.x - e1.x
                           val diffY = e2.y - e1.y
+                          
                           if (abs(diffX) > abs(diffY)) {
                               if (abs(diffX) > SWIPE_THRESHOLD && abs(velocityX) > SWIPE_VELOCITY_THRESHOLD) {
-                                  if (diffX > 0) {
-                                      val targetIndex = currentIndex - 1
-                                      if (targetIndex >= 0) navigateToAndRefreshFull(targetIndex)
-                                  } else {
-                                      val targetIndex = currentIndex + 1
-                                      if (targetIndex < photoList.size) navigateToAndRefreshFull(targetIndex)
-                                  }
+                                  val t = if (diffX > 0) { if (isSortDesc) currentIndex - 1 else currentIndex + 1 } 
+                                          else { if (isSortDesc) currentIndex + 1 else currentIndex - 1 }
+                                  if (t in 0 until photoList.size) navigateToAndRefreshFull(t)
+                                  return true
+                              }
+                          } else {
+                              if (abs(diffY) > SWIPE_THRESHOLD && abs(velocityY) > SWIPE_VELOCITY_THRESHOLD) {
+                                  val t = if (diffY > 0) { if (isSortDesc) currentIndex - 1 else currentIndex + 1 } 
+                                          else { if (isSortDesc) currentIndex + 1 else currentIndex - 1 }
+                                  if (t in 0 until photoList.size) navigateToAndRefreshFull(t)
                                   return true
                               }
                           }
@@ -1017,7 +1058,7 @@ jobs:
               }
 
               private fun showPinMenu() {
-                  val options = arrayOf("50枚", "100枚", "全て表示", "手手動設定 (${if (pinLimitCount > 0 && pinLimitCount != 50 && pinLimitCount != 100) "${pinLimitCount}枚" else "指定"})")
+                  val options = arrayOf("50枚", "100枚", "全て表示", "手動設定 (${if (pinLimitCount > 0 && pinLimitCount != 50 && pinLimitCount != 100) "${pinLimitCount}枚" else "指定"})")
                   val currentIdx = when (pinLimitCount) { 50 -> 0; 100 -> 1; -1 -> 2; else -> 3 }
                   AlertDialog.Builder(this).setTitle("地図ピン表示件数").setSingleChoiceItems(options, currentIdx) { dialog, which ->
                           when (which) {
@@ -1148,13 +1189,15 @@ jobs:
                   currentFolderUri = folderUri
 
                   lifecycleScope.launch {
-                      tvImageInfo.text = "データベース検索中..."
-                      ivThumbnail.setImageDrawable(null)
+                      if (!isCameraMode) {
+                          tvImageInfo.text = "データベース検索中..."
+                          ivThumbnail.setImageDrawable(null)
+                      }
                       photoList.clear()
 
                       val rawList = fetchFileListQuery(folderUri)
                       if (rawList.isEmpty()) {
-                          tvImageInfo.text = "写真なし"
+                          if (!isCameraMode) tvImageInfo.text = "写真なし"
                           Toast.makeText(this@MainActivity, "JPEGが見つかりません", Toast.LENGTH_SHORT).show()
                           return@launch
                       }
@@ -1274,7 +1317,15 @@ jobs:
                       if (item.direction != null) t += " (方位: ${item.direction}°)"
                       t
                   } else "GPS: なし (${item.debugStatus})"
-                  tvImageInfo.text = "[${index + 1}/${photoList.size}] ${item.name}\n$gpsText"
+
+                  if (isCameraMode) {
+                      val destText = if (currentFolderUri != null) "【選択中フォルダへ保存】" else "【標準カメラフォルダへ保存】"
+                      tvImageInfo.text = "$destText\n保存完了: ${item.name}"
+                      tvImageInfo.setBackgroundColor(Color.parseColor("#CC0000"))
+                  } else {
+                      tvImageInfo.text = "[${index + 1}/${photoList.size}] ${item.name}\n$gpsText"
+                      tvImageInfo.setBackgroundColor(Color.parseColor("#99000000"))
+                  }
 
                   btnNewer.isEnabled = (if (isSortDesc) index > 0 else index < photoList.size - 1)
                   btnOlder.isEnabled = (if (isSortDesc) index < photoList.size - 1 else index > 0)

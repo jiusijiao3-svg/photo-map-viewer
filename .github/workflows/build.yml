@@ -98,7 +98,6 @@ jobs:
               kotlinOptions {
                   jvmTarget = "17"
               }
-              
               packaging {
                   jniLibs {
                       useLegacyPackaging = false
@@ -198,17 +197,15 @@ jobs:
           </adaptive-icon>
           EOF
 
-          # 7. app/src/main/AndroidManifest.xml (縦固定 screenOrientation="portrait" を追加)
+          # 7. app/src/main/AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <!-- Permissions -->
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
               
-              <!-- Camera & Location Permissions -->
               <uses-permission android:name="android.permission.CAMERA" />
               <uses-feature android:name="android.hardware.camera" android:required="false" />
               <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -252,6 +249,8 @@ jobs:
           import android.hardware.SensorEvent
           import android.hardware.SensorEventListener
           import android.hardware.SensorManager
+          import android.location.GnssStatus
+          import android.location.LocationManager
           import android.net.Uri
           import android.os.Build
           import android.os.Bundle
@@ -259,7 +258,6 @@ jobs:
           import android.provider.DocumentsContract
           import android.provider.MediaStore
           import android.text.InputType
-          import android.util.Log
           import android.util.LruCache
           import android.view.GestureDetector
           import android.view.Gravity
@@ -279,6 +277,7 @@ jobs:
           import android.widget.GridView
           import android.widget.ImageView
           import android.widget.LinearLayout
+          import android.widget.ProgressBar
           import android.widget.TextView
           import android.widget.Toast
           import androidx.activity.result.contract.ActivityResultContracts
@@ -318,6 +317,10 @@ jobs:
           import java.util.Date
           import java.util.Locale
           import kotlin.math.abs
+          import kotlin.math.cos
+          import kotlin.math.floor
+          import kotlin.math.ln
+          import kotlin.math.tan
 
           class MainActivity : AppCompatActivity(), SensorEventListener {
 
@@ -332,11 +335,17 @@ jobs:
                   var debugStatus: String = ""
               )
 
+              companion object {
+                  // タイルの最大有効期間 (180日 = 約半年)
+                  private const val TILE_MAX_AGE_MS = 180L * 24 * 60 * 60 * 1000L
+              }
+
               private val photoList = mutableListOf<PhotoItem>()
               private var currentIndex = 0
               private var isMapReady = false
               private var backgroundLoadJob: Job? = null
               private var fullScreenDecodeJob: Job? = null
+              private var cameraInfoResetJob: Job? = null
               private var currentFolderUri: Uri? = null
 
               // 設定値
@@ -363,6 +372,10 @@ jobs:
               private lateinit var fusedLocationClient: FusedLocationProviderClient
               private var locationCallback: LocationCallback? = null
               private var isTrackingGps = false
+              private var locationManager: LocationManager? = null
+              private var gnssStatusCallback: GnssStatus.Callback? = null
+              private var gnssSatelliteCount = 0
+              private var gpsAccuracy = -1.0f
 
               // CameraX
               private var imageCapture: ImageCapture? = null
@@ -375,7 +388,9 @@ jobs:
               private lateinit var ivThumbnail: ImageView
               private lateinit var tvImageInfo: TextView
               private lateinit var tvBgLoadStatus: TextView
+              private lateinit var mapContainer: FrameLayout
               private lateinit var mapWebView: WebView
+              private lateinit var tvGnssHud: TextView
               private lateinit var btnNewer: Button
               private lateinit var btnOlder: Button
               private lateinit var btnGsi: Button
@@ -429,6 +444,7 @@ jobs:
                   accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
                   magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
                   fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+                  locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
                   val rootContainer = FrameLayout(this).apply {
                       layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -494,7 +510,6 @@ jobs:
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply { topMargin = 6.dp() }
                   }
 
-                  // サムネイルのスワイプ処理
                   setupThumbGestureDetector()
 
                   thumbContainer = FrameLayout(this).apply {
@@ -575,11 +590,27 @@ jobs:
                   midRow.addView(btnGoogleMap)
                   mainLayout.addView(midRow)
 
-                  // 地図ビュー
-                  mapWebView = WebView(this).apply {
+                  // 地図コンテナ
+                  mapContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 6.dp(); bottomMargin = 6.dp() }
                   }
-                  mainLayout.addView(mapWebView)
+
+                  mapWebView = WebView(this).apply {
+                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                  }
+                  mapContainer.addView(mapWebView)
+
+                  // 衛星数・精度HUD
+                  tvGnssHud = TextView(this).apply {
+                      text = "GNSS: 測位中..."
+                      setTextColor(Color.parseColor("#DDFFFFFF"))
+                      textSize = 10f
+                      setBackgroundColor(Color.parseColor("#88000000"))
+                      setPadding(6.dp(), 2.dp(), 6.dp(), 2.dp())
+                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp()) }
+                  }
+                  mapContainer.addView(tvGnssHud)
+                  mainLayout.addView(mapContainer)
 
                   // 下段ボタン (通常モード)
                   btmRowNormal = LinearLayout(this).apply {
@@ -663,12 +694,42 @@ jobs:
                   super.onResume()
                   accelerometer?.also { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
                   magnetometer?.also { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+                  startGnssListening()
               }
 
               override fun onPause() {
                   super.onPause()
                   sensorManager.unregisterListener(this)
                   stopLocationTracking()
+                  stopGnssListening()
+              }
+
+              // --- GNSS 監視 ---
+              @SuppressLint("MissingPermission")
+              private fun startGnssListening() {
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+                  gnssStatusCallback = object : GnssStatus.Callback() {
+                      override fun onSatelliteStatusChanged(status: GnssStatus) {
+                          var usedCount = 0
+                          for (i in 0 until status.satelliteCount) {
+                              if (status.usedInFix(i)) usedCount++
+                          }
+                          gnssSatelliteCount = usedCount
+                          updateGnssHud()
+                      }
+                  }
+                  gnssStatusCallback?.let { locationManager?.registerGnssStatusCallback(it, null) }
+              }
+
+              private fun stopGnssListening() {
+                  gnssStatusCallback?.let { locationManager?.unregisterGnssStatusCallback(it) }
+              }
+
+              private fun updateGnssHud() {
+                  runOnUiThread {
+                      val accStr = if (gpsAccuracy > 0) "±%.1fm".format(gpsAccuracy) else "--"
+                      tvGnssHud.text = "GNSS: ${gnssSatelliteCount}基 / 誤差: $accStr"
+                  }
               }
 
               // --- センサー処理 (コンパス ＆ 真北偏角補正) ---
@@ -693,7 +754,6 @@ jobs:
                           
                           currentAzimuth = azimuthInDegrees.toDouble()
                           
-                          // 地図の真北に一致させるため偏角を加算
                           var trueAzimuth = (currentAzimuth + currentDeclination) % 360.0
                           if (trueAzimuth < 0) trueAzimuth += 360.0
                           
@@ -708,6 +768,7 @@ jobs:
               // --- カメラ (CameraX) & シャッター機能 ---
               private fun toggleCameraMode() {
                   isCameraMode = !isCameraMode
+                  cameraInfoResetJob?.cancel()
                   
                   if (isCameraMode) {
                       ivThumbnail.visibility = View.GONE
@@ -806,7 +867,6 @@ jobs:
                                           exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, lonStr)
                                           exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, if (targetLon >= 0) "E" else "W")
 
-                                          // ★ 改良点1: GeomagneticField による真北補正
                                           val geoField = GeomagneticField(
                                               targetLat.toFloat(),
                                               targetLon.toFloat(),
@@ -818,7 +878,7 @@ jobs:
                                           if (trueAzimuth < 0) trueAzimuth += 360.0
 
                                           exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION, "%.2f/1".format(Locale.US, trueAzimuth))
-                                          exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "T") // 正真正銘の True North
+                                          exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "T")
                                           exif.saveAttributes()
 
                                           val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
@@ -835,8 +895,8 @@ jobs:
                                                       }
                                                   }
                                                   withContext(Dispatchers.Main) {
-                                                      Toast.makeText(this@MainActivity, "保存完了: $newFileName", Toast.LENGTH_SHORT).show()
                                                       loadPhotosUltraFast(currentFolderUri!!, newFileName)
+                                                      showTemporaryCameraMessage("保存完了: $newFileName")
                                                   }
                                               }
                                           } else {
@@ -856,7 +916,7 @@ jobs:
                                                       }
                                                   }
                                                   withContext(Dispatchers.Main) {
-                                                      Toast.makeText(this@MainActivity, "標準フォルダに保存しました\n$newFileName", Toast.LENGTH_SHORT).show()
+                                                      showTemporaryCameraMessage("標準フォルダに保存完了\n$newFileName")
                                                   }
                                               }
                                           }
@@ -884,6 +944,18 @@ jobs:
                   }
               }
 
+              private fun showTemporaryCameraMessage(msg: String) {
+                  cameraInfoResetJob?.cancel()
+                  val destText = if (currentFolderUri != null) "【選択中フォルダへ保存】" else "【標準カメラフォルダへ保存】"
+                  tvImageInfo.text = "$destText\n$msg"
+                  cameraInfoResetJob = lifecycleScope.launch {
+                      delay(3000)
+                      if (isCameraMode) {
+                          tvImageInfo.text = "$destText\n十字線を対象に合わせて撮影"
+                      }
+                  }
+              }
+
               private fun convertToDegreeMinuteSeconds(coordinate: Double): String {
                   val absolute = abs(coordinate)
                   val degrees = absolute.toInt()
@@ -898,14 +970,16 @@ jobs:
                   if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
                   
                   isTrackingGps = true
+                  mapWebView.evaluateJavascript("setGpsButtonActive(true);", null)
                   val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000).build()
                   
                   val callback = object : LocationCallback() {
                       override fun onLocationResult(locationResult: LocationResult) {
                           locationResult.lastLocation?.let { loc ->
-                              // 現在地の偏角を更新
+                              gpsAccuracy = loc.accuracy
                               val geoField = GeomagneticField(loc.latitude.toFloat(), loc.longitude.toFloat(), 0f, System.currentTimeMillis())
                               currentDeclination = geoField.declination
+                              updateGnssHud()
 
                               if (isTrackingGps && isMapReady) {
                                   mapWebView.evaluateJavascript("moveToGpsLocation(${loc.latitude}, ${loc.longitude});", null)
@@ -920,17 +994,18 @@ jobs:
               private fun stopLocationTracking() {
                   locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
                   isTrackingGps = false
+                  mapWebView.evaluateJavascript("setGpsButtonActive(false);", null)
               }
 
               // --- UI入れ替えロジック ---
               private fun toggleViewOrder() {
                   isMapOnTop = !isMapOnTop
                   (thumbContainer.parent as? ViewGroup)?.removeView(thumbContainer)
-                  (mapWebView.parent as? ViewGroup)?.removeView(mapWebView)
+                  (mapContainer.parent as? ViewGroup)?.removeView(mapContainer)
 
                   if (isMapOnTop) {
-                      mapWebView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                      topSection.addView(mapWebView)
+                      mapContainer.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                      topSection.addView(mapContainer)
 
                       thumbContainer.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 6.dp(); bottomMargin = 6.dp() }
                       val midRowIdx = mainLayout.indexOfChild(btnSwap.parent as View)
@@ -939,9 +1014,9 @@ jobs:
                       thumbContainer.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                       topSection.addView(thumbContainer)
 
-                      mapWebView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 6.dp(); bottomMargin = 6.dp() }
+                      mapContainer.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 6.dp(); bottomMargin = 6.dp() }
                       val midRowIdx = mainLayout.indexOfChild(btnSwap.parent as View)
-                      mainLayout.addView(mapWebView, midRowIdx + 1)
+                      mainLayout.addView(mapContainer, midRowIdx + 1)
                   }
               }
 
@@ -1022,7 +1097,7 @@ jobs:
                   updateFullScreenImage()
               }
 
-              // --- 設定・権限・メニュー ---
+              // --- 設定・メニュー ---
               private fun loadSettings() {
                   val prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
                   isSortDesc = prefs.getBoolean("sort_desc", true)
@@ -1173,10 +1248,138 @@ jobs:
 
               private fun showCacheMenu() {
                   val limitStr = if (cacheLimitMb > 0) "${cacheLimitMb} MB" else "無制限"
-                  val items = arrayOf("キャッシュ上限設定: $limitStr", "🗑️ 地図タイルキャッシュ消去", "🗑️ Exifメタデータ消去")
+                  val items = arrayOf(
+                      "📥 周辺3kmの地図を保存 (中心点基準)",
+                      "キャッシュ上限設定: $limitStr",
+                      "🗑️ 地図タイルキャッシュ消去",
+                      "🗑️ Exifメタデータ消去"
+                  )
                   AlertDialog.Builder(this).setTitle("キャッシュ管理").setItems(items) { _, which ->
-                          when (which) { 0 -> showCacheLimitDialog(); 1 -> clearTileCache(); 2 -> clearMetadataCache() }
+                          when (which) {
+                              0 -> triggerPrecacheAroundCenter()
+                              1 -> showCacheLimitDialog()
+                              2 -> clearTileCache()
+                              3 -> clearMetadataCache()
+                          }
                       }.setNegativeButton("戻る") { _, _ -> showMainMenu() }.show()
+              }
+
+              // --- 周辺3kmタイル一括ダウンロード (半年以内スルー/半年以上前上書き) ---
+              private fun triggerPrecacheAroundCenter() {
+                  mapWebView.evaluateJavascript("getMapCenterAndZoom();") { result ->
+                      try {
+                          val json = JSONObject(result.removeSurrounding("\"").replace("\\", ""))
+                          val centerLat = json.getDouble("lat")
+                          val centerLng = json.getDouble("lng")
+                          val zoom = json.getInt("zoom")
+                          startPrecacheTiles(centerLat, centerLng, zoom)
+                      } catch (e: Exception) {
+                          Toast.makeText(this, "中心座標の取得に失敗しました", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+              }
+
+              private fun startPrecacheTiles(lat: Double, lng: Double, zoom: Int) {
+                  val dLat = 3.0 / 111.32
+                  val dLng = 3.0 / (111.32 * cos(Math.toRadians(lat)))
+                  
+                  val minLat = lat - dLat
+                  val maxLat = lat + dLat
+                  val minLng = lng - dLng
+                  val maxLng = lng + dLng
+
+                  val n = 1 shl zoom
+                  fun lng2TileX(l: Double): Int = floor((l + 180.0) / 360.0 * n).toInt()
+                  fun lat2TileY(l: Double): Int {
+                      val rad = Math.toRadians(l)
+                      return floor((1.0 - ln(tan(rad) + 1.0 / cos(rad)) / Math.PI) / 2.0 * n).toInt()
+                  }
+
+                  val minX = lng2TileX(minLng)
+                  val maxX = lng2TileX(maxLng)
+                  val minY = lat2TileY(maxLat)
+                  val maxY = lat2TileY(minLat)
+
+                  val tileUrls = mutableListOf<String>()
+                  for (x in minOf(minX, maxX)..maxOf(minX, maxX)) {
+                      for (y in minOf(minY, maxY)..maxOf(minY, maxY)) {
+                          tileUrls.add("https://cyberjapandata.gsi.go.jp/xyz/std/$zoom/$x/$y.png")
+                      }
+                  }
+
+                  val total = tileUrls.size
+                  if (total > 300) {
+                      Toast.makeText(this, "範囲が広すぎるため縮尺を拡大(ズームイン)してください", Toast.LENGTH_LONG).show()
+                      return
+                  }
+
+                  val progressLayout = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(20.dp(), 16.dp(), 20.dp(), 16.dp())
+                  }
+                  val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                      max = total
+                      progress = 0
+                  }
+                  val progressText = TextView(this).apply {
+                      text = "準備中... 0 / $total 枚"
+                      setTextColor(Color.WHITE)
+                      textSize = 12f
+                      setPadding(0, 8.dp(), 0, 0)
+                  }
+                  progressLayout.addView(progressBar)
+                  progressLayout.addView(progressText)
+
+                  val dialog = AlertDialog.Builder(this)
+                      .setTitle("3km圏内タイル保存 (Zoom: $zoom)")
+                      .setView(progressLayout)
+                      .setCancelable(false)
+                      .setNegativeButton("中止", null)
+                      .show()
+
+                  var isCancelled = false
+                  dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                      isCancelled = true
+                      dialog.dismiss()
+                  }
+
+                  lifecycleScope.launch(Dispatchers.IO) {
+                      var processedCount = 0
+                      val tileDir = File(cacheDir, "tiles").apply { if (!exists()) mkdirs() }
+                      val now = System.currentTimeMillis()
+
+                      for (urlStr in tileUrls) {
+                          if (isCancelled) break
+                          val cacheFile = File(tileDir, md5(urlStr) + ".png")
+                          
+                          // 半年以内判定: ファイルが存在し、半年未満ならスルー
+                          val isFresh = cacheFile.exists() && cacheFile.length() > 0L && (now - cacheFile.lastModified() < TILE_MAX_AGE_MS)
+                          
+                          if (!isFresh) {
+                              try {
+                                  val conn = URL(urlStr).openConnection() as HttpURLConnection
+                                  conn.connectTimeout = 3000
+                                  conn.readTimeout = 3000
+                                  conn.connect()
+                                  if (conn.responseCode == 200) {
+                                      val bytes = conn.inputStream.readBytes()
+                                      FileOutputStream(cacheFile).use { it.write(bytes) }
+                                  }
+                              } catch (e: Exception) {}
+                              delay(30)
+                          }
+                          processedCount++
+                          withContext(Dispatchers.Main) {
+                              progressBar.progress = processedCount
+                              progressText.text = "処理中: $processedCount / $total 枚"
+                          }
+                      }
+                      withContext(Dispatchers.Main) {
+                          if (dialog.isShowing) dialog.dismiss()
+                          trimTileCacheIfNeeded()
+                          Toast.makeText(this@MainActivity, "周辺3kmの地図タイルを更新しました ($processedCount 枚)", Toast.LENGTH_SHORT).show()
+                      }
+                  }
               }
 
               private fun showCacheLimitDialog() {
@@ -1240,7 +1443,6 @@ jobs:
                   }
               }
 
-              // ★ 改良点3: URLのMD5ハッシュ計算
               private fun md5(input: String): String {
                   val md = MessageDigest.getInstance("MD5")
                   return md.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -1256,7 +1458,10 @@ jobs:
                   
                   val needed = permissions.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
                   if (needed.isNotEmpty()) permissionLauncher.launch(needed.toTypedArray())
-                  else checkAutoResume()
+                  else {
+                      checkAutoResume()
+                      startGnssListening()
+                  }
               }
 
               // --- 爆速リストアップ処理 ---
@@ -1419,7 +1624,7 @@ jobs:
 
                   if (isCameraMode) {
                       val destText = if (currentFolderUri != null) "【選択中フォルダへ保存】" else "【標準カメラフォルダへ保存】"
-                      tvImageInfo.text = "$destText\n保存完了: ${item.name}"
+                      tvImageInfo.text = "$destText\n十字線を対象に合わせて撮影"
                       tvImageInfo.setBackgroundColor(Color.parseColor("#CC0000"))
                   } else {
                       tvImageInfo.text = "[${index + 1}/${photoList.size}] ${item.name}\n$gpsText"
@@ -1450,17 +1655,31 @@ jobs:
                           if (url.contains("cyberjapandata.gsi.go.jp")) {
                               try {
                                   val tileDir = File(cacheDir, "tiles"); if (!tileDir.exists()) tileDir.mkdirs()
-                                  // ★ 改良点3: hashCode() から MD5ハッシュ化に変更
                                   val ext = if (url.endsWith(".png")) ".png" else ".jpg"
+                                  val mime = if (url.endsWith(".png")) "image/png" else "image/jpeg"
                                   val cacheFile = File(tileDir, md5(url) + ext)
-                                  
-                                  if (cacheFile.exists() && cacheFile.length() > 0) return WebResourceResponse(if (url.endsWith(".png")) "image/png" else "image/jpeg", "UTF-8", FileInputStream(cacheFile))
-                                  val conn = URL(url).openConnection() as HttpURLConnection
-                                  conn.connectTimeout = 4000; conn.readTimeout = 4000; conn.connect()
-                                  if (conn.responseCode == 200) {
-                                      val bytes = conn.inputStream.readBytes(); FileOutputStream(cacheFile).use { it.write(bytes) }
-                                      lifecycleScope.launch(Dispatchers.IO) { trimTileCacheIfNeeded() }
-                                      return WebResourceResponse(if (url.endsWith(".png")) "image/png" else "image/jpeg", "UTF-8", ByteArrayInputStream(bytes))
+                                  val now = System.currentTimeMillis()
+
+                                  // 半年以内判定: ファイルが存在し、半年未満ならスルー（キャッシュを直接利用）
+                                  val isFresh = cacheFile.exists() && cacheFile.length() > 0L && (now - cacheFile.lastModified() < TILE_MAX_AGE_MS)
+                                  if (isFresh) {
+                                      return WebResourceResponse(mime, "UTF-8", FileInputStream(cacheFile))
+                                  }
+
+                                  // 半年以上前または未保存の場合は通信取得して上書き
+                                  try {
+                                      val conn = URL(url).openConnection() as HttpURLConnection
+                                      conn.connectTimeout = 4000; conn.readTimeout = 4000; conn.connect()
+                                      if (conn.responseCode == 200) {
+                                          val bytes = conn.inputStream.readBytes(); FileOutputStream(cacheFile).use { it.write(bytes) }
+                                          lifecycleScope.launch(Dispatchers.IO) { trimTileCacheIfNeeded() }
+                                          return WebResourceResponse(mime, "UTF-8", ByteArrayInputStream(bytes))
+                                      }
+                                  } catch (e: Exception) {
+                                      // 通信失敗（圏外）時は、半年以上前であっても手元の既存キャッシュをフォールバック利用
+                                      if (cacheFile.exists() && cacheFile.length() > 0L) {
+                                          return WebResourceResponse(mime, "UTF-8", FileInputStream(cacheFile))
+                                      }
                                   }
                               } catch (e: Exception) { }
                           }
@@ -1479,28 +1698,26 @@ jobs:
                           <style>
                               html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #1a1a1a; }
                               
-                              /* GPSトラッキングボタン */
-                              .gps-btn {
+                              .custom-map-btn {
                                   background: white; border: 2px solid rgba(0,0,0,0.2); border-radius: 4px;
-                                  width: 34px; height: 34px; line-height: 34px; text-align: center;
-                                  font-size: 20px; font-weight: bold; cursor: pointer; color: #333;
+                                  width: 36px; height: 36px; line-height: 36px; text-align: center;
+                                  font-size: 18px; font-weight: bold; cursor: pointer; color: #333;
+                                  margin-bottom: 5px; box-shadow: 0 1px 5px rgba(0,0,0,0.4);
                               }
-                              .gps-btn.active { color: #0066FF; }
+                              .custom-map-btn.active { background: #0066FF; color: white; border-color: #0044CC; }
                               
-                              /* 十字線 (カメラモード用) */
                               #crosshair {
                                   position: absolute; top: 50%; left: 50%;
                                   transform: translate(-50%, -50%);
-                                  width: 40px; height: 40px; pointer-events: none; z-index: 1000;
-                                  display: none;
+                                  width: 44px; height: 44px; pointer-events: none; z-index: 1000;
+                                  display: block;
                               }
                               #crosshair::before, #crosshair::after {
-                                  content: ''; position: absolute; background: rgba(204, 0, 0, 0.8);
+                                  content: ''; position: absolute; background: rgba(255, 51, 51, 0.9);
                               }
-                              #crosshair::before { top: 0; bottom: 0; left: 19px; width: 2px; }
-                              #crosshair::after { left: 0; right: 0; top: 19px; height: 2px; }
+                              #crosshair::before { top: 0; bottom: 0; left: 21px; width: 2px; }
+                              #crosshair::after { left: 0; right: 0; top: 21px; height: 2px; }
                               
-                              /* コンパス扇形 (カメラモード用) */
                               #compass-cone {
                                   position: absolute; top: 50%; left: 50%;
                                   width: 0; height: 0;
@@ -1526,39 +1743,46 @@ jobs:
                               L.control.zoom({position: 'topleft'}).addTo(map);
                               L.control.layers({"標準地図": stdLayer, "衛星写真": photoLayer}, null, { position: 'topright' }).addTo(map);
 
-                              var GpsControl = L.Control.extend({
+                              var ActionControl = L.Control.extend({
                                   options: { position: 'topright' },
                                   onAdd: function (map) {
-                                      var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
-                                      var button = L.DomUtil.create('div', 'gps-btn', container);
-                                      button.innerHTML = '◎';
+                                      var container = L.DomUtil.create('div', '');
                                       
-                                      L.DomEvent.on(button, 'click', function(e) {
+                                      var gpsBtn = L.DomUtil.create('div', 'custom-map-btn gps-btn', container);
+                                      gpsBtn.innerHTML = '◎';
+                                      gpsBtn.title = "現在地を追従";
+                                      L.DomEvent.on(gpsBtn, 'click', function(e) {
                                           L.DomEvent.stopPropagation(e);
-                                          var isTracking = button.classList.contains('active');
-                                          if (isTracking) {
-                                              button.classList.remove('active');
-                                              Android.setGpsTracking(false);
-                                          } else {
-                                              button.classList.add('active');
-                                              Android.setGpsTracking(true);
-                                          }
+                                          var isTracking = gpsBtn.classList.contains('active');
+                                          Android.setGpsTracking(!isTracking);
                                       });
+
+                                      var jumpBtn = L.DomUtil.create('div', 'custom-map-btn', container);
+                                      jumpBtn.innerHTML = '📍';
+                                      jumpBtn.title = "選択中の写真へ移動";
+                                      L.DomEvent.on(jumpBtn, 'click', function(e) {
+                                          L.DomEvent.stopPropagation(e);
+                                          Android.jumpToSelectedPhoto();
+                                      });
+
                                       return container;
                                   }
                               });
-                              map.addControl(new GpsControl());
+                              map.addControl(new ActionControl());
 
                               map.on('dragstart', function() {
-                                  var btn = document.querySelector('.gps-btn');
-                                  if (btn && btn.classList.contains('active')) {
-                                      btn.classList.remove('active');
-                                      Android.setGpsTracking(false);
-                                  }
+                                  Android.setGpsTracking(false);
                               });
 
                               var markerLayer = L.layerGroup().addTo(map);
                               var isCameraModeActive = false;
+
+                              function setGpsButtonActive(isActive) {
+                                  var btn = document.querySelector('.gps-btn');
+                                  if (!btn) return;
+                                  if (isActive) btn.classList.add('active');
+                                  else btn.classList.remove('active');
+                              }
 
                               function moveToGpsLocation(lat, lng) {
                                   map.panTo([lat, lng], { animate: true, duration: 0.3 });
@@ -1566,14 +1790,11 @@ jobs:
 
                               function toggleCameraMode(isCamera) {
                                   isCameraModeActive = isCamera;
-                                  var crosshair = document.getElementById('crosshair');
                                   var compass = document.getElementById('compass-cone');
                                   if (isCamera) {
-                                      crosshair.style.display = 'block';
                                       compass.style.display = 'block';
                                       markerLayer.clearLayers();
                                   } else {
-                                      crosshair.style.display = 'none';
                                       compass.style.display = 'none';
                                   }
                               }
@@ -1587,6 +1808,11 @@ jobs:
                               function getCrosshairLocation() {
                                   var center = map.getCenter();
                                   return JSON.stringify({ lat: center.lat, lng: center.lng });
+                              }
+
+                              function getMapCenterAndZoom() {
+                                  var center = map.getCenter();
+                                  return JSON.stringify({ lat: center.lat, lng: center.lng, zoom: map.getZoom() });
                               }
 
                               function updatePoints(targetLat, targetLon, hasCoords, allPointsJson, currentIndex) {
@@ -1668,6 +1894,20 @@ jobs:
                       runOnUiThread {
                           if (isTracking) startLocationTracking()
                           else stopLocationTracking()
+                      }
+                  }
+
+                  @JavascriptInterface
+                  fun jumpToSelectedPhoto() {
+                      runOnUiThread {
+                          if (photoList.isNotEmpty()) {
+                              val current = photoList[currentIndex]
+                              if (current.lat != null && current.lon != null) {
+                                  mapWebView.evaluateJavascript("map.panTo([${current.lat}, ${current.lon}], { animate: true, duration: 0.4 });", null)
+                              } else {
+                                  Toast.makeText(this@MainActivity, "この写真にはGPS情報がありません", Toast.LENGTH_SHORT).show()
+                              }
+                          }
                       }
                   }
               }

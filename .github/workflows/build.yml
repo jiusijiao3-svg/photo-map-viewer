@@ -114,7 +114,7 @@ jobs:
               implementation("androidx.camera:camera-view:\$camerax_version")
               
               // GPS
-              implementation("com.google.android.gms:play-services-location:21.0.1")
+              implementation("com.google.android.gms:play-services-location:21.1.0")
           }
           EOF
 
@@ -183,6 +183,7 @@ jobs:
           import android.provider.DocumentsContract
           import android.provider.MediaStore
           import android.text.InputType
+          import android.util.Log
           import android.util.LruCache
           import android.view.GestureDetector
           import android.view.Gravity
@@ -327,7 +328,7 @@ jobs:
               private val permissionLauncher = registerForActivityResult(
                   ActivityResultContracts.RequestMultiplePermissions()
               ) { permissions -> 
-                  val allGranted = permissions.entries.all { it.value }
+                  val allGranted = permissions.entries.all { it.value == true }
                   if (allGranted) checkAutoResume()
                   else Toast.makeText(this, "権限が不足しています", Toast.LENGTH_LONG).show()
               }
@@ -683,7 +684,6 @@ jobs:
                   btnShutter.isEnabled = false
                   btnShutter.text = "保存中..."
 
-                  // 1. 地図の十字線座標をJavaScriptから取得
                   mapWebView.evaluateJavascript("getCrosshairLocation();") { result ->
                       var targetLat = 0.0
                       var targetLon = 0.0
@@ -700,7 +700,6 @@ jobs:
                           return@evaluateJavascript
                       }
 
-                      // 2. 撮影してテンポラリに保存
                       val tempFile = File(cacheDir, "temp_capture.jpg")
                       val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile).build()
 
@@ -711,7 +710,6 @@ jobs:
                               override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                   lifecycleScope.launch(Dispatchers.IO) {
                                       try {
-                                          // 3. テンポラリJPEGにExif（座標・方角）を書き込む
                                           val exif = ExifInterface(tempFile.absolutePath)
                                           val latStr = convertToDegreeMinuteSeconds(targetLat)
                                           val lonStr = convertToDegreeMinuteSeconds(targetLon)
@@ -723,12 +721,10 @@ jobs:
                                           exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "T")
                                           exif.saveAttributes()
 
-                                          // 4. 保存先の分岐 (選択中フォルダ or 端末標準フォルダ)
                                           val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
                                           val newFileName = "IMG_${timestamp}.jpg"
                                           
                                           if (currentFolderUri != null) {
-                                              // SAFを使って選択中のフォルダへ保存
                                               val rootDoc = DocumentFile.fromTreeUri(this@MainActivity, currentFolderUri!!)
                                               val newFileDoc = rootDoc?.createFile("image/jpeg", newFileName)
                                               
@@ -738,8 +734,6 @@ jobs:
                                                           inStream.copyTo(outStream)
                                                       }
                                                   }
-                                                  
-                                                  // 成功したらビューアに戻って再読み込み
                                                   withContext(Dispatchers.Main) {
                                                       Toast.makeText(this@MainActivity, "保存完了: $newFileName", Toast.LENGTH_SHORT).show()
                                                       toggleCameraMode()
@@ -747,7 +741,6 @@ jobs:
                                                   }
                                               }
                                           } else {
-                                              // フォルダ未選択時: MediaStoreを使って標準カメラフォルダ (DCIM/Camera) へ保存
                                               val contentValues = ContentValues().apply {
                                                   put(MediaStore.MediaColumns.DISPLAY_NAME, newFileName)
                                                   put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
@@ -765,11 +758,7 @@ jobs:
                                                   }
                                                   withContext(Dispatchers.Main) {
                                                       Toast.makeText(this@MainActivity, "標準カメラフォルダに保存しました\n$newFileName", Toast.LENGTH_LONG).show()
-                                                      toggleCameraMode() // カメラモード解除
-                                                  }
-                                              } else {
-                                                  withContext(Dispatchers.Main) {
-                                                      Toast.makeText(this@MainActivity, "標準フォルダへの保存に失敗しました", Toast.LENGTH_SHORT).show()
+                                                      toggleCameraMode()
                                                   }
                                               }
                                           }
@@ -797,7 +786,6 @@ jobs:
                   }
               }
 
-              // 小数点座標をExif用フォーマット(度/分/秒)に変換
               private fun convertToDegreeMinuteSeconds(coordinate: Double): String {
                   val absolute = abs(coordinate)
                   val degrees = absolute.toInt()
@@ -806,7 +794,7 @@ jobs:
                   return "$degrees/1,$minutes/1,$seconds/1000"
               }
 
-              // --- GPSトラッキング (地図上の◎ボタン連動) ---
+              // --- GPSトラッキング ---
               @SuppressLint("MissingPermission")
               private fun startLocationTracking() {
                   if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return

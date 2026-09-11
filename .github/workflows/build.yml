@@ -97,7 +97,6 @@ jobs:
                   jvmTarget = "17"
               }
               
-              // 16KBアライメント対策
               packaging {
                   jniLibs {
                       useLegacyPackaging = false
@@ -113,12 +112,11 @@ jobs:
               implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
               implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
               
-              // CameraX (16KBページサイズ対応の最新安定版へアップデート)
-              val camerax_version = "1.4.1"
-              implementation("androidx.camera:camera-core:\$camerax_version")
-              implementation("androidx.camera:camera-camera2:\$camerax_version")
-              implementation("androidx.camera:camera-lifecycle:\$camerax_version")
-              implementation("androidx.camera:camera-view:\$camerax_version")
+              // CameraX (16KBページサイズ問題解決済みの 1.4.1 をハードコードで指定)
+              implementation("androidx.camera:camera-core:1.4.1")
+              implementation("androidx.camera:camera-camera2:1.4.1")
+              implementation("androidx.camera:camera-lifecycle:1.4.1")
+              implementation("androidx.camera:camera-view:1.4.1")
               
               // GPS
               implementation("com.google.android.gms:play-services-location:21.0.1")
@@ -654,7 +652,7 @@ jobs:
                       tvImageInfo.setBackgroundColor(Color.parseColor("#99000000"))
                       
                       val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-                      cameraProviderFuture.addListener({
+                      cameraProviderFuture.addListener(Runnable {
                           try {
                               cameraProviderFuture.get().unbindAll()
                           } catch(e: Exception) {}
@@ -670,19 +668,21 @@ jobs:
 
               private fun startCamera() {
                   val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-                  cameraProviderFuture.addListener({
+                  cameraProviderFuture.addListener(Runnable {
                       try {
                           val cameraProvider = cameraProviderFuture.get()
                           val preview = Preview.Builder().build().also {
                               it.setSurfaceProvider(viewFinder.surfaceProvider)
                           }
-                          imageCapture = ImageCapture.Builder().build()
+                          // 警告回避のため、一旦ローカル変数で宣言してから使用する
+                          val capture = ImageCapture.Builder().build()
+                          imageCapture = capture
                           val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
                           cameraProvider.unbindAll()
-                          cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture)
+                          cameraProvider.bindToLifecycle(this@MainActivity, cameraSelector, preview, capture)
                       } catch(exc: Exception) {
-                          Toast.makeText(this, "カメラの起動に失敗しました", Toast.LENGTH_SHORT).show()
+                          Toast.makeText(this@MainActivity, "カメラの起動に失敗しました", Toast.LENGTH_SHORT).show()
                       }
                   }, ContextCompat.getMainExecutor(this))
               }
@@ -1017,7 +1017,7 @@ jobs:
               }
 
               private fun showPinMenu() {
-                  val options = arrayOf("50枚", "100枚", "全て表示", "手動設定 (${if (pinLimitCount > 0 && pinLimitCount != 50 && pinLimitCount != 100) "${pinLimitCount}枚" else "指定"})")
+                  val options = arrayOf("50枚", "100枚", "全て表示", "手手動設定 (${if (pinLimitCount > 0 && pinLimitCount != 50 && pinLimitCount != 100) "${pinLimitCount}枚" else "指定"})")
                   val currentIdx = when (pinLimitCount) { 50 -> 0; 100 -> 1; -1 -> 2; else -> 3 }
                   AlertDialog.Builder(this).setTitle("地図ピン表示件数").setSingleChoiceItems(options, currentIdx) { dialog, which ->
                           when (which) {

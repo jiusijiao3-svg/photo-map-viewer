@@ -156,9 +156,12 @@ jobs:
           import android.net.Uri
           import android.os.Build
           import android.os.Bundle
+          import android.provider.DocumentsContract
           import android.text.InputType
           import android.util.LruCache
+          import android.view.GestureDetector
           import android.view.Gravity
+          import android.view.MotionEvent
           import android.view.View
           import android.view.ViewGroup
           import android.webkit.JavascriptInterface
@@ -184,6 +187,8 @@ jobs:
           import androidx.exifinterface.media.ExifInterface
           import androidx.lifecycle.lifecycleScope
           import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.Job
+          import kotlinx.coroutines.delay
           import kotlinx.coroutines.launch
           import kotlinx.coroutines.withContext
           import org.json.JSONArray
@@ -194,6 +199,7 @@ jobs:
           import java.io.FileOutputStream
           import java.net.HttpURLConnection
           import java.net.URL
+          import kotlin.math.abs
 
           class MainActivity : AppCompatActivity() {
 
@@ -203,12 +209,16 @@ jobs:
                   val lastModified: Long,
                   var lat: Double? = null,
                   var lon: Double? = null,
+                  var direction: Double? = null,
+                  var isLoaded: Boolean = false,
                   var debugStatus: String = ""
               )
 
               private val photoList = mutableListOf<PhotoItem>()
               private var currentIndex = 0
               private var isMapReady = false
+              private var backgroundLoadJob: Job? = null
+              private var fullScreenDecodeJob: Job? = null
 
               // 設定値
               private var isSortDesc = true
@@ -216,17 +226,21 @@ jobs:
               private var cacheLimitMb = 100
               private var startupMode = 0
 
+              private lateinit var mainLayout: LinearLayout
+              private lateinit var thumbContainer: FrameLayout
               private lateinit var ivThumbnail: ImageView
               private lateinit var tvImageInfo: TextView
+              private lateinit var tvBgLoadStatus: TextView
               private lateinit var mapWebView: WebView
               private lateinit var btnNewer: Button
               private lateinit var btnOlder: Button
               private lateinit var btnGsi: Button
               private lateinit var btnGoogleMap: Button
+              private lateinit var btnSwap: Button
 
-              // 全画面オーバーレイ
               private lateinit var fullContainer: FrameLayout
               private lateinit var fullImageView: ImageView
+              private lateinit var gestureDetector: GestureDetector
 
               private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
 
@@ -251,13 +265,13 @@ jobs:
                       )
                       getSharedPreferences("app_settings", Context.MODE_PRIVATE)
                           .edit().putString("last_folder_uri", uri.toString()).apply()
-                      loadPhotosFromFolder(uri, null)
+                      loadPhotosUltraFast(uri, null)
                   }
               }
 
+              @SuppressLint("ClickableViewAccessibility")
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-
                   loadSettings()
 
                   val rootContainer = FrameLayout(this).apply {
@@ -267,7 +281,7 @@ jobs:
                       )
                   }
 
-                  val mainLayout = LinearLayout(this).apply {
+                  mainLayout = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setBackgroundColor(Color.parseColor("#121212"))
                       setPadding(8.dp(), 8.dp(), 8.dp(), 8.dp())
@@ -277,7 +291,7 @@ jobs:
                       )
                   }
 
-                  // 1. 最上部バー: [ ≡ ] [ |◀ 先頭 ] [ 📁 フォルダ選択 ]
+                  // 1. トップバー (≡ |◀ 📷 📁)
                   val topRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
@@ -288,9 +302,7 @@ jobs:
                       textSize = 20f
                       setBackgroundColor(Color.parseColor("#383838"))
                       setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(48.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                          marginEnd = 4.dp()
-                      }
+                      layoutParams = LinearLayout.LayoutParams(48.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }
                       setOnClickListener { showMainMenu() }
                   }
                   topRow.addView(btnSettings)
@@ -300,22 +312,26 @@ jobs:
                       textSize = 12f
                       setBackgroundColor(Color.parseColor("#383838"))
                       setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(70.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                          marginEnd = 4.dp()
-                      }
-                      setOnClickListener {
-                          if (photoList.isNotEmpty()) {
-                              navigateTo(0)
-                          } else {
-                              Toast.makeText(this@MainActivity, "写真が読み込まれていません", Toast.LENGTH_SHORT).show()
-                          }
-                      }
+                      layoutParams = LinearLayout.LayoutParams(66.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }
+                      setOnClickListener { if (photoList.isNotEmpty()) navigateTo(0) }
                   }
                   topRow.addView(btnTopPhoto)
 
+                  val btnCamera = Button(this).apply {
+                      text = "📷"
+                      textSize = 16f
+                      setBackgroundColor(Color.parseColor("#0066FF")) // カメラボタンは青系で強調
+                      setTextColor(Color.WHITE)
+                      layoutParams = LinearLayout.LayoutParams(54.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }
+                      setOnClickListener { 
+                          Toast.makeText(this@MainActivity, "第2段階で実装予定: ファインダー・GPS補正機能", Toast.LENGTH_SHORT).show() 
+                      }
+                  }
+                  topRow.addView(btnCamera)
+
                   val btnSelectFolder = Button(this).apply {
-                      text = "📁 フォルダ選択"
-                      textSize = 13f
+                      text = "📁 選択"
+                      textSize = 12f
                       setBackgroundColor(Color.parseColor("#2D2D2D"))
                       setTextColor(Color.WHITE)
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
@@ -325,7 +341,7 @@ jobs:
                   mainLayout.addView(topRow)
 
                   // 2. サムネイル枠
-                  val thumbContainer = FrameLayout(this).apply {
+                  thumbContainer = FrameLayout(this).apply {
                       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply {
                           topMargin = 6.dp()
                       }
@@ -352,30 +368,51 @@ jobs:
                       }
                   }
                   thumbContainer.addView(tvImageInfo)
+                  
+                  tvBgLoadStatus = TextView(this).apply {
+                      setTextColor(Color.parseColor("#BBBBBB"))
+                      textSize = 9f
+                      setBackgroundColor(Color.parseColor("#66000000"))
+                      setPadding(4.dp(), 2.dp(), 4.dp(), 2.dp())
+                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply {
+                          setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp())
+                      }
+                      visibility = View.GONE
+                  }
+                  thumbContainer.addView(tvBgLoadStatus)
+
                   mainLayout.addView(thumbContainer)
 
-                  // 3. 中段ボタン
+                  // 3. 中段ボタン (⇅ボタン追加)
                   val midRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply {
-                          topMargin = 6.dp()
-                      }
+                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply { topMargin = 6.dp() }
                   }
 
+                  btnSwap = Button(this).apply {
+                      text = "⇅"
+                      textSize = 16f
+                      setBackgroundColor(Color.parseColor("#383838"))
+                      setTextColor(Color.WHITE)
+                      layoutParams = LinearLayout.LayoutParams(44.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }
+                      setOnClickListener { toggleViewOrder() }
+                  }
+                  midRow.addView(btnSwap)
+
                   btnGsi = Button(this).apply {
-                      text = "国土地理院で開く"
-                      textSize = 12f
+                      text = "国土地理院"
+                      textSize = 11f
                       setBackgroundColor(Color.parseColor("#333333"))
                       setTextColor(Color.WHITE)
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }
                       setOnClickListener { openInGsiMap() }
                   }
                   btnGoogleMap = Button(this).apply {
-                      text = "Googleマップで開く"
-                      textSize = 12f
+                      text = "Googleマップ"
+                      textSize = 11f
                       setBackgroundColor(Color.parseColor("#333333"))
                       setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = 4.dp() }
+                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
                       setOnClickListener { openInGoogleMap() }
                   }
                   midRow.addView(btnGsi)
@@ -425,24 +462,22 @@ jobs:
 
                   rootContainer.addView(mainLayout)
 
-                  // 6. 最前面全画面レイアウト
+                  // 6. 全画面レイアウト (スワイプ対応)
+                  setupGestureDetector()
+
                   fullContainer = FrameLayout(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(
-                          ViewGroup.LayoutParams.MATCH_PARENT,
-                          ViewGroup.LayoutParams.MATCH_PARENT
-                      )
+                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                       setBackgroundColor(Color.BLACK)
                       visibility = View.GONE
-                      setOnClickListener { closeFullScreen() }
+                      setOnTouchListener { _, event ->
+                          gestureDetector.onTouchEvent(event)
+                          true
+                      }
                   }
 
                   fullImageView = ImageView(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(
-                          ViewGroup.LayoutParams.MATCH_PARENT,
-                          ViewGroup.LayoutParams.MATCH_PARENT
-                      )
+                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                       scaleType = ImageView.ScaleType.FIT_CENTER
-                      setOnClickListener { closeFullScreen() }
                   }
                   fullContainer.addView(fullImageView)
                   rootContainer.addView(fullContainer)
@@ -450,10 +485,69 @@ jobs:
                   setContentView(rootContainer)
                   setupWebView()
 
-                  // 【重要】画面部品がすべて生成された最後に権限確認と自動復帰を呼ぶ
                   checkPermissions()
               }
 
+              // --- UI入れ替えロジック ---
+              private fun toggleViewOrder() {
+                  val idxThumb = mainLayout.indexOfChild(thumbContainer)
+                  val idxMap = mainLayout.indexOfChild(mapWebView)
+                  if (idxThumb == -1 || idxMap == -1) return
+
+                  mainLayout.removeView(thumbContainer)
+                  mainLayout.removeView(mapWebView)
+
+                  if (idxThumb < idxMap) {
+                      // サムネが上・地図が下だった場合 -> 地図を上に
+                      mainLayout.addView(mapWebView, idxThumb)
+                      mainLayout.addView(thumbContainer, idxMap)
+                  } else {
+                      // 地図が上・サムネが下だった場合 -> サムネを上に
+                      mainLayout.addView(thumbContainer, idxMap)
+                      mainLayout.addView(mapWebView, idxThumb)
+                  }
+              }
+
+              // --- スワイプ検知 ---
+              private fun setupGestureDetector() {
+                  gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                      private val SWIPE_THRESHOLD = 100
+                      private val SWIPE_VELOCITY_THRESHOLD = 100
+
+                      override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+                          if (e1 == null) return false
+                          val diffX = e2.x - e1.x
+                          val diffY = e2.y - e1.y
+                          if (abs(diffX) > abs(diffY)) {
+                              if (abs(diffX) > SWIPE_THRESHOLD && abs(velocityX) > SWIPE_VELOCITY_THRESHOLD) {
+                                  if (diffX > 0) {
+                                      // 右スワイプ (前の写真/古い写真方向)
+                                      val targetIndex = currentIndex - 1
+                                      if (targetIndex >= 0) navigateToAndRefreshFull(targetIndex)
+                                  } else {
+                                      // 左スワイプ (次の写真/新しい写真方向)
+                                      val targetIndex = currentIndex + 1
+                                      if (targetIndex < photoList.size) navigateToAndRefreshFull(targetIndex)
+                                  }
+                                  return true
+                              }
+                          }
+                          return false
+                      }
+
+                      override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                          closeFullScreen()
+                          return true
+                      }
+                  })
+              }
+
+              private fun navigateToAndRefreshFull(index: Int) {
+                  navigateTo(index)
+                  updateFullScreenImage()
+              }
+
+              // --- 設定・権限・メニュー ---
               private fun loadSettings() {
                   val prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
                   isSortDesc = prefs.getBoolean("sort_desc", true)
@@ -481,18 +575,12 @@ jobs:
                   val hasPerm = contentResolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }
                   if (hasPerm) {
                       val targetName = if (startupMode == 0) lastPhoto else null
-                      loadPhotosFromFolder(uri, targetName)
+                      loadPhotosUltraFast(uri, targetName)
                   }
               }
 
               private fun showMainMenu() {
-                  val items = arrayOf(
-                      "📁 ファイル操作 ▶",
-                      "📍 地図ピン表示 ▶",
-                      "💾 キャッシュ管理 ▶",
-                      "⚙️ 起動時の設定 ▶"
-                  )
-
+                  val items = arrayOf("📁 ファイル操作 ▶", "📍 地図ピン表示 ▶", "💾 キャッシュ管理 ▶", "⚙️ 起動時の設定 ▶")
                   AlertDialog.Builder(this)
                       .setTitle("メニュー")
                       .setItems(items) { _, which ->
@@ -502,18 +590,12 @@ jobs:
                               2 -> showCacheMenu()
                               3 -> showStartupMenu()
                           }
-                      }
-                      .setNegativeButton("閉じる", null)
-                      .show()
+                      }.setNegativeButton("閉じる", null).show()
               }
 
               private fun showFileMenu() {
                   val sortLabel = if (isSortDesc) "新しい順 (降順)" else "古い順 (昇順)"
-                  val items = arrayOf(
-                      "🖼️ サムネイル一覧から選択",
-                      "📑 ファイル名一覧から選択",
-                      "並び順: $sortLabel"
-                  )
+                  val items = arrayOf("🖼️ サムネイル一覧", "📑 ファイル名一覧", "並び順: $sortLabel")
                   AlertDialog.Builder(this)
                       .setTitle("ファイル操作")
                       .setItems(items) { _, which ->
@@ -522,20 +604,15 @@ jobs:
                               1 -> showFileNamePicker()
                               2 -> showSortDialog()
                           }
-                      }
-                      .setNegativeButton("戻る") { _, _ -> showMainMenu() }
-                      .show()
+                      }.setNegativeButton("戻る") { _, _ -> showMainMenu() }.show()
               }
 
               private fun showThumbnailGridPicker() {
                   if (photoList.isEmpty()) {
-                      Toast.makeText(this, "先にフォルダを選択してください", Toast.LENGTH_SHORT).show()
+                      Toast.makeText(this, "写真がありません", Toast.LENGTH_SHORT).show()
                       return
                   }
-
-                  val dialogView = FrameLayout(this).apply {
-                      setBackgroundColor(Color.parseColor("#1E1E1E"))
-                  }
+                  val dialogView = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#1E1E1E")) }
                   val gridView = GridView(this).apply {
                       numColumns = 3
                       stretchMode = GridView.STRETCH_COLUMN_WIDTH
@@ -612,7 +689,6 @@ jobs:
                                   }
                               }
                           }
-
                           frame.setOnClickListener {
                               dialogRef?.dismiss()
                               navigateTo(position)
@@ -626,24 +702,19 @@ jobs:
                       .setView(dialogView)
                       .setNegativeButton("キャンセル", null)
                       .create()
-
                   dialogRef = builtDialog
                   builtDialog.show()
               }
 
               private fun showFileNamePicker() {
-                  if (photoList.isEmpty()) {
-                      Toast.makeText(this, "先にフォルダを選択してください", Toast.LENGTH_SHORT).show()
-                      return
-                  }
+                  if (photoList.isEmpty()) return
                   val names = photoList.mapIndexed { idx, p ->
                       val prefix = if (idx == currentIndex) "▶ " else "   "
                       val gps = if (p.lat != null) " [GPS]" else ""
                       "$prefix[${idx + 1}] ${p.name}$gps"
                   }.toTypedArray()
-
                   AlertDialog.Builder(this)
-                      .setTitle("ファイル名一覧から選択")
+                      .setTitle("ファイル名一覧")
                       .setItems(names) { _, which -> navigateTo(which) }
                       .setNegativeButton("戻る") { _, _ -> showFileMenu() }
                       .show()
@@ -653,30 +724,20 @@ jobs:
                   val options = arrayOf("新しい順 (降順)", "古い順 (昇順)")
                   val currentSelection = if (isSortDesc) 0 else 1
                   AlertDialog.Builder(this)
-                      .setTitle("ファイルの並び順")
+                      .setTitle("並び順")
                       .setSingleChoiceItems(options, currentSelection) { dialog, which ->
                           isSortDesc = (which == 0)
                           saveSettings()
                           applySort()
                           dialog.dismiss()
-                      }
-                      .show()
+                      }.show()
               }
 
               private fun showPinMenu() {
-                  val options = arrayOf(
-                      "50枚",
-                      "100枚",
-                      "全て表示",
-                      "手動設定 (${if (pinLimitCount !in listOf(50, 100, -1)) "${pinLimitCount}枚" else "枚数を指定"})"
-                  )
+                  val options = arrayOf("50枚", "100枚", "全て表示", "手動設定 (${if (pinLimitCount > 0 && pinLimitCount != 50 && pinLimitCount != 100) "${pinLimitCount}枚" else "指定"})")
                   val currentIdx = when (pinLimitCount) {
-                      50 -> 0
-                      100 -> 1
-                      -1 -> 2
-                      else -> 3
+                      50 -> 0; 100 -> 1; -1 -> 2; else -> 3
                   }
-
                   AlertDialog.Builder(this)
                       .setTitle("地図ピン表示件数")
                       .setSingleChoiceItems(options, currentIdx) { dialog, which ->
@@ -684,14 +745,9 @@ jobs:
                               0 -> { pinLimitCount = 50; finishPinChange(dialog) }
                               1 -> { pinLimitCount = 100; finishPinChange(dialog) }
                               2 -> { pinLimitCount = -1; finishPinChange(dialog) }
-                              3 -> {
-                                  dialog.dismiss()
-                                  showCustomPinDialog()
-                              }
+                              3 -> { dialog.dismiss(); showCustomPinDialog() }
                           }
-                      }
-                      .setNegativeButton("戻る") { _, _ -> showMainMenu() }
-                      .show()
+                      }.setNegativeButton("戻る") { _, _ -> showMainMenu() }.show()
               }
 
               private fun finishPinChange(dialog: DialogInterface) {
@@ -703,34 +759,23 @@ jobs:
               private fun showCustomPinDialog() {
                   val input = EditText(this).apply {
                       inputType = InputType.TYPE_CLASS_NUMBER
-                      hint = "表示したい枚数を入力 (例: 200)"
+                      hint = "表示枚数 (例: 200)"
                       if (pinLimitCount > 0) setText(pinLimitCount.toString())
                   }
                   AlertDialog.Builder(this)
-                      .setTitle("手動設定 (枚数指定)")
+                      .setTitle("手動設定")
                       .setView(input)
                       .setPositiveButton("決定") { _, _ ->
                           val count = input.text.toString().toIntOrNull()
                           if (count != null && count > 0) {
-                              pinLimitCount = count
-                              saveSettings()
-                              renderCurrentPhotoOnMap()
-                          } else {
-                              Toast.makeText(this, "正しい数値を入力してください", Toast.LENGTH_SHORT).show()
-                          }
-                      }
-                      .setNegativeButton("キャンセル") { _, _ -> showPinMenu() }
-                      .show()
+                              pinLimitCount = count; saveSettings(); renderCurrentPhotoOnMap()
+                          } else Toast.makeText(this, "正しい数値を入力してください", Toast.LENGTH_SHORT).show()
+                      }.setNegativeButton("キャンセル") { _, _ -> showPinMenu() }.show()
               }
 
               private fun showCacheMenu() {
                   val limitStr = if (cacheLimitMb > 0) "${cacheLimitMb} MB" else "無制限"
-                  val items = arrayOf(
-                      "キャッシュ上限設定: $limitStr",
-                      "🗑️ 地図タイルキャッシュ消去",
-                      "🗑️ Exifメタデータ消去"
-                  )
-
+                  val items = arrayOf("キャッシュ上限設定: $limitStr", "🗑️ 地図タイルキャッシュ消去", "🗑️ Exifメタデータ消去")
                   AlertDialog.Builder(this)
                       .setTitle("キャッシュ管理")
                       .setItems(items) { _, which ->
@@ -739,68 +784,61 @@ jobs:
                               1 -> clearTileCache()
                               2 -> clearMetadataCache()
                           }
-                      }
-                      .setNegativeButton("戻る") { _, _ -> showMainMenu() }
-                      .show()
+                      }.setNegativeButton("戻る") { _, _ -> showMainMenu() }.show()
               }
 
               private fun showCacheLimitDialog() {
-                  val options = arrayOf("50 MB", "100 MB (推奨)", "250 MB", "500 MB", "無制限")
+                  val options = arrayOf("50 MB", "100 MB", "250 MB", "500 MB", "無制限")
                   val values = listOf(50, 100, 250, 500, -1)
                   val currentIdx = values.indexOf(cacheLimitMb).let { if (it >= 0) it else 1 }
-
                   AlertDialog.Builder(this)
-                      .setTitle("地図キャッシュ上限容量")
+                      .setTitle("地図キャッシュ上限")
                       .setSingleChoiceItems(options, currentIdx) { dialog, which ->
                           cacheLimitMb = values[which]
                           saveSettings()
                           lifecycleScope.launch(Dispatchers.IO) { trimTileCacheIfNeeded() }
                           dialog.dismiss()
-                      }
-                      .setNegativeButton("戻る") { _, _ -> showCacheMenu() }
-                      .show()
+                      }.setNegativeButton("戻る") { _, _ -> showCacheMenu() }.show()
               }
 
               private fun clearTileCache() {
                   lifecycleScope.launch(Dispatchers.IO) {
                       val tileDir = File(cacheDir, "tiles")
                       if (tileDir.exists()) tileDir.deleteRecursively()
-                      withContext(Dispatchers.Main) {
-                          Toast.makeText(this@MainActivity, "地図タイルを消去しました", Toast.LENGTH_SHORT).show()
-                      }
+                      withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "消去しました", Toast.LENGTH_SHORT).show() }
                   }
               }
 
               private fun clearMetadataCache() {
                   getSharedPreferences("exif_metadata_cache", Context.MODE_PRIVATE).edit().clear().apply()
-                  Toast.makeText(this, "Exifキャッシュを消去しました (次回フル解析)", Toast.LENGTH_SHORT).show()
+                  Toast.makeText(this, "Exifキャッシュ消去完了", Toast.LENGTH_SHORT).show()
               }
 
               private fun showStartupMenu() {
-                  val options = arrayOf(
-                      "前回最後に見ていた写真を開く",
-                      "フォルダの先頭ファイルを開く",
-                      "自動で開かない (手動でフォルダ選択)"
-                  )
+                  val options = arrayOf("前回最後に見ていた写真", "フォルダの先頭ファイル", "手動でフォルダ選択")
                   AlertDialog.Builder(this)
                       .setTitle("起動時の動作")
                       .setSingleChoiceItems(options, startupMode) { dialog, which ->
-                          startupMode = which
-                          saveSettings()
-                          dialog.dismiss()
-                      }
-                      .setNegativeButton("戻る") { _, _ -> showMainMenu() }
-                      .show()
+                          startupMode = which; saveSettings(); dialog.dismiss()
+                      }.setNegativeButton("戻る") { _, _ -> showMainMenu() }.show()
               }
 
+              // --- 全画面表示処理 (アップデート版) ---
               private fun openFullScreen() {
                   if (photoList.isEmpty()) return
-                  val item = photoList.getOrNull(currentIndex) ?: return
-
-                  ivThumbnail.drawable?.let { fullImageView.setImageDrawable(it) }
                   fullContainer.visibility = View.VISIBLE
+                  updateFullScreenImage()
+              }
 
-                  lifecycleScope.launch(Dispatchers.IO) {
+              private fun updateFullScreenImage() {
+                  if (photoList.isEmpty()) return
+                  val item = photoList.getOrNull(currentIndex) ?: return
+                  
+                  // スワイプですぐ切り替わるよう、低解像度のサムネイルを先に表示
+                  ivThumbnail.drawable?.let { fullImageView.setImageDrawable(it) }
+
+                  fullScreenDecodeJob?.cancel() // 連続スワイプ時は古いデコード処理を破棄
+                  fullScreenDecodeJob = lifecycleScope.launch(Dispatchers.IO) {
                       val bmp = decodeSampledBitmap(item.uri, 2560, 2560)
                       withContext(Dispatchers.Main) {
                           if (fullContainer.visibility == View.VISIBLE && bmp != null) {
@@ -810,15 +848,15 @@ jobs:
                   }
               }
 
-              private fun closeFullScreen() {
+              private fun closeFullScreen() { 
                   fullContainer.visibility = View.GONE
+                  fullScreenDecodeJob?.cancel()
               }
 
               @Deprecated("Deprecated in Java")
               override fun onBackPressed() {
                   if (::fullContainer.isInitialized && fullContainer.visibility == View.VISIBLE) {
-                      closeFullScreen()
-                      return
+                      closeFullScreen(); return
                   }
                   super.onBackPressed()
               }
@@ -828,10 +866,8 @@ jobs:
                       contentResolver.openInputStream(uri)?.use { stream ->
                           val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                           BitmapFactory.decodeStream(stream, null, options)
-
                           val rawWidth = options.outWidth
                           val rawHeight = options.outHeight
-
                           var inSample = 1
                           if (rawWidth > reqWidth || rawHeight > reqHeight) {
                               val halfWidth = rawWidth / 2
@@ -840,26 +876,21 @@ jobs:
                                   inSample *= 2
                               }
                           }
-
                           val decodeOpts = BitmapFactory.Options().apply { inSampleSize = inSample }
                           contentResolver.openInputStream(uri)?.use { s2 ->
                               BitmapFactory.decodeStream(s2, null, decodeOpts)
                           }
                       }
-                  } catch (e: Exception) {
-                      null
-                  }
+                  } catch (e: Exception) { null }
               }
 
               private fun trimTileCacheIfNeeded() {
                   if (cacheLimitMb <= 0) return
                   val tileDir = File(cacheDir, "tiles")
                   if (!tileDir.exists()) return
-
                   val files = tileDir.listFiles() ?: return
                   var total = files.sumOf { it.length() }
                   val maxBytes = cacheLimitMb * 1024L * 1024L
-
                   if (total > maxBytes) {
                       val sorted = files.sortedBy { it.lastModified() }
                       val target = (maxBytes * 0.8).toLong()
@@ -880,11 +911,227 @@ jobs:
                           permissions.add(Manifest.permission.ACCESS_MEDIA_LOCATION)
                       }
                   }
-                  if (permissions.isNotEmpty()) {
-                      permissionLauncher.launch(permissions.toTypedArray())
-                  } else {
-                      checkAutoResume()
+                  if (permissions.isNotEmpty()) permissionLauncher.launch(permissions.toTypedArray())
+                  else checkAutoResume()
+              }
+
+              // --- 爆速リストアップ処理 ---
+              private suspend fun fetchFileListQuery(folderUri: Uri): List<PhotoItem> = withContext(Dispatchers.IO) {
+                  val list = mutableListOf<PhotoItem>()
+                  try {
+                      val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                          folderUri, DocumentsContract.getTreeDocumentId(folderUri)
+                      )
+                      val projection = arrayOf(
+                          DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                          DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                          DocumentsContract.Document.COLUMN_MIME_TYPE,
+                          DocumentsContract.Document.COLUMN_LAST_MODIFIED
+                      )
+                      contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                          val idIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                          val nameIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                          val mimeIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                          val modIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+
+                          while (cursor.moveToNext()) {
+                              val mime = cursor.getString(mimeIdx) ?: ""
+                              if (mime.startsWith("image/jpeg") || mime.startsWith("image/jpg")) {
+                                  val docId = cursor.getString(idIdx)
+                                  val name = cursor.getString(nameIdx) ?: "Unknown"
+                                  val lastMod = cursor.getLong(modIdx)
+                                  val uri = DocumentsContract.buildDocumentUriUsingTree(folderUri, docId)
+                                  list.add(PhotoItem(uri, name, lastMod))
+                              }
+                          }
+                      }
+                  } catch (e: Exception) { }
+                  list
+              }
+
+              private fun loadPhotosUltraFast(folderUri: Uri, restorePhotoName: String?) {
+                  backgroundLoadJob?.cancel()
+
+                  lifecycleScope.launch {
+                      tvImageInfo.text = "データベース検索中..."
+                      ivThumbnail.setImageDrawable(null)
+                      photoList.clear()
+
+                      val rawList = fetchFileListQuery(folderUri)
+                      if (rawList.isEmpty()) {
+                          tvImageInfo.text = "写真なし"
+                          Toast.makeText(this@MainActivity, "JPEGが見つかりません", Toast.LENGTH_SHORT).show()
+                          return@launch
+                      }
+                      
+                      photoList.addAll(rawList)
+                      applySortListOnly()
+
+                      val initialLoadCount = if (pinLimitCount > 0) minOf(pinLimitCount, photoList.size) else minOf(50, photoList.size)
+                      withContext(Dispatchers.IO) {
+                          parseExifBlock(0, initialLoadCount)
+                      }
+
+                      var targetIdx = 0
+                      if (restorePhotoName != null) {
+                          val found = photoList.indexOfFirst { it.name == restorePhotoName }
+                          if (found != -1) targetIdx = found
+                      }
+                      if (!photoList[targetIdx].isLoaded) {
+                          withContext(Dispatchers.IO) { parseExifBlock(targetIdx, targetIdx + 1) }
+                      }
+                      
+                      currentIndex = targetIdx
+                      displayPhoto(currentIndex)
+
+                      if (initialLoadCount < photoList.size) {
+                          startBackgroundParsing(initialLoadCount)
+                      }
                   }
+              }
+
+              private fun applySortListOnly() {
+                  if (isSortDesc) photoList.sortByDescending { it.lastModified }
+                  else photoList.sortBy { it.lastModified }
+              }
+
+              private fun applySort() {
+                  if (photoList.isEmpty()) return
+                  val currentItem = photoList.getOrNull(currentIndex)
+                  applySortListOnly()
+                  if (currentItem != null) {
+                      val newIndex = photoList.indexOfFirst { it.uri == currentItem.uri }
+                      currentIndex = if (newIndex != -1) newIndex else 0
+                  }
+                  displayPhoto(currentIndex)
+              }
+
+              private fun parseExifBlock(startIndex: Int, endIndex: Int) {
+                  val prefs = getSharedPreferences("exif_metadata_cache", Context.MODE_PRIVATE)
+                  val editor = prefs.edit()
+
+                  for (i in startIndex until minOf(endIndex, photoList.size)) {
+                      val item = photoList[i]
+                      if (item.isLoaded) continue
+
+                      val cacheKey = "${item.name}_${item.lastModified}"
+                      val cachedData = prefs.getString(cacheKey, null)
+
+                      if (cachedData != null) {
+                          if (cachedData != "NO_GPS") {
+                              val parts = cachedData.split(",")
+                              if (parts.size >= 2) {
+                                  item.lat = parts[0].toDoubleOrNull()
+                                  item.lon = parts[1].toDoubleOrNull()
+                                  if (parts.size >= 3) item.direction = parts[2].toDoubleOrNull()
+                                  item.debugStatus = "OK"
+                              }
+                          } else {
+                              item.debugStatus = "GPSタグなし"
+                          }
+                      } else {
+                          try {
+                              contentResolver.openFileDescriptor(item.uri, "r")?.use { pfd ->
+                                  val exif = ExifInterface(pfd.fileDescriptor)
+                                  val latLong = FloatArray(2)
+                                  if (exif.getLatLong(latLong)) {
+                                      item.lat = latLong[0].toDouble()
+                                      item.lon = latLong[1].toDouble()
+                                      val direction = exif.getAttributeDouble(ExifInterface.TAG_GPS_IMG_DIRECTION, -1.0)
+                                      if (direction >= 0) item.direction = direction
+                                      item.debugStatus = "OK"
+                                      val dirStr = item.direction?.toString() ?: ""
+                                      editor.putString(cacheKey, "${item.lat},${item.lon},${dirStr}")
+                                  } else {
+                                      item.debugStatus = "GPSタグなし"
+                                      editor.putString(cacheKey, "NO_GPS")
+                                  }
+                              }
+                          } catch (e: Exception) {
+                              item.debugStatus = "例外"
+                          }
+                      }
+                      item.isLoaded = true
+                  }
+                  editor.apply()
+              }
+
+              private fun startBackgroundParsing(startIndex: Int) {
+                  tvBgLoadStatus.visibility = View.VISIBLE
+                  backgroundLoadJob = lifecycleScope.launch(Dispatchers.IO) {
+                      val total = photoList.size
+                      val batchSize = 10
+                      
+                      for (i in startIndex until total step batchSize) {
+                          parseExifBlock(i, i + batchSize)
+                          val currentParsed = minOf(i + batchSize, total)
+                          
+                          withContext(Dispatchers.Main) {
+                              tvBgLoadStatus.text = "裏で解析中: $currentParsed / $total"
+                              if (pinLimitCount == -1 || currentParsed <= pinLimitCount) {
+                                  renderCurrentPhotoOnMap()
+                              }
+                          }
+                          delay(20)
+                      }
+                      withContext(Dispatchers.Main) { tvBgLoadStatus.visibility = View.GONE }
+                  }
+              }
+
+              private fun navigateTo(newIndex: Int) {
+                  if (photoList.isEmpty()) return
+                  if (newIndex in photoList.indices) {
+                      currentIndex = newIndex
+                      if (!photoList[currentIndex].isLoaded) {
+                          lifecycleScope.launch {
+                              withContext(Dispatchers.IO) { parseExifBlock(currentIndex, currentIndex + 1) }
+                              displayPhoto(currentIndex)
+                          }
+                      } else {
+                          displayPhoto(currentIndex)
+                      }
+                  }
+              }
+
+              private fun displayPhoto(index: Int) {
+                  val item = photoList[index]
+
+                  getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+                      .edit().putString("last_photo_name", item.name).apply()
+
+                  val cacheKey = "${item.uri}_main"
+                  val cachedBmp = memoryCache.get(cacheKey)
+                  if (cachedBmp != null) {
+                      ivThumbnail.setImageBitmap(cachedBmp)
+                  } else {
+                      lifecycleScope.launch(Dispatchers.IO) {
+                          val bmp = decodeSampledBitmap(item.uri, 800, 800)
+                          if (bmp != null) {
+                              memoryCache.put(cacheKey, bmp)
+                              withContext(Dispatchers.Main) {
+                                  if (currentIndex == index) ivThumbnail.setImageBitmap(bmp)
+                              }
+                          }
+                      }
+                  }
+
+                  val gpsText = if (item.lat != null && item.lon != null) {
+                      var t = "GPS: ${"%.6f".format(item.lat)}, ${"%.6f".format(item.lon)}"
+                      if (item.direction != null) t += " (方位: ${item.direction}°)"
+                      t
+                  } else {
+                      "GPS: なし (${item.debugStatus})"
+                  }
+                  tvImageInfo.text = "[${index + 1}/${photoList.size}] ${item.name}\n$gpsText"
+
+                  btnNewer.isEnabled = (if (isSortDesc) index > 0 else index < photoList.size - 1)
+                  btnOlder.isEnabled = (if (isSortDesc) index < photoList.size - 1 else index > 0)
+
+                  val hasGps = (item.lat != null && item.lon != null)
+                  btnGsi.isEnabled = hasGps
+                  btnGoogleMap.isEnabled = hasGps
+
+                  renderCurrentPhotoOnMap()
               }
 
               @SuppressLint("SetJavaScriptEnabled")
@@ -898,14 +1145,12 @@ jobs:
                           isMapReady = true
                           renderCurrentPhotoOnMap()
                       }
-
                       override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                           val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
                           if (url.contains("cyberjapandata.gsi.go.jp")) {
                               try {
                                   val tileDir = File(cacheDir, "tiles")
                                   if (!tileDir.exists()) tileDir.mkdirs()
-
                                   val fileName = url.hashCode().toString() + if (url.endsWith(".png")) ".png" else ".jpg"
                                   val cacheFile = File(tileDir, fileName)
 
@@ -938,6 +1183,7 @@ jobs:
                           <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
                           <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
                           <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                          <script src="https://cdn.jsdelivr.net/npm/leaflet-semicircle@2.0.4/Semicircle.min.js"></script>
                           <style>
                               html, body, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #1a1a1a; }
                           </style>
@@ -974,43 +1220,34 @@ jobs:
                                   points.forEach(function(p) {
                                       if (p.hasGps && !p.isCurrent) {
                                           L.circleMarker([p.lat, p.lon], {
-                                              radius: 7,
-                                              color: '#ff3333',
-                                              fillColor: '#ff0000',
-                                              fillOpacity: 0.85,
-                                              weight: 2
+                                              radius: 7, color: '#ff3333', fillColor: '#ff0000', fillOpacity: 0.85, weight: 2
                                           }).addTo(markerLayer);
 
                                           var hitArea = L.circleMarker([p.lat, p.lon], {
-                                              radius: 22,
-                                              opacity: 0,
-                                              fillOpacity: 0
+                                              radius: 22, opacity: 0, fillOpacity: 0
                                           }).addTo(markerLayer);
 
-                                          hitArea.on('click', function() {
-                                              Android.onMarkerClicked(p.index);
-                                          });
+                                          hitArea.on('click', function() { Android.onMarkerClicked(p.index); });
                                       }
                                   });
 
                                   if (hasCoords) {
+                                      var currentPoint = points.find(p => p.isCurrent);
+                                      if (currentPoint && currentPoint.dir !== undefined && currentPoint.dir !== null && currentPoint.dir >= 0) {
+                                          L.semiCircle([targetLat, targetLon], {
+                                              radius: 40, weight: 0, color: '#ff3333', fillColor: '#ff3333', fillOpacity: 0.35,
+                                              startAngle: currentPoint.dir - 30, stopAngle: currentPoint.dir + 30
+                                          }).addTo(markerLayer);
+                                      }
+
                                       L.circleMarker([targetLat, targetLon], {
-                                          radius: 10,
-                                          color: '#ffffff',
-                                          fillColor: '#0066ff',
-                                          fillOpacity: 0.95,
-                                          weight: 3
+                                          radius: 10, color: '#ffffff', fillColor: '#0066ff', fillOpacity: 0.95, weight: 3
                                       }).addTo(markerLayer);
 
                                       var currentHit = L.circleMarker([targetLat, targetLon], {
-                                          radius: 24,
-                                          opacity: 0,
-                                          fillOpacity: 0
+                                          radius: 24, opacity: 0, fillOpacity: 0
                                       }).addTo(markerLayer);
-
-                                      currentHit.on('click', function() {
-                                          Android.onMarkerClicked(currentIndex);
-                                      });
+                                      currentHit.on('click', function() { Android.onMarkerClicked(currentIndex); });
 
                                       map.panTo([targetLat, targetLon], { animate: true, duration: 0.4 });
                                   }
@@ -1023,168 +1260,14 @@ jobs:
                   mapWebView.loadDataWithBaseURL("https://maps.gsi.go.jp", htmlContent, "text/html", "UTF-8", null)
               }
 
-              private fun loadPhotosFromFolder(folderUri: Uri, restorePhotoName: String?) {
-                  lifecycleScope.launch {
-                      tvImageInfo.text = "フォルダ内を検索中..."
-                      ivThumbnail.setImageDrawable(null)
-
-                      val files = withContext(Dispatchers.IO) {
-                          try {
-                              val rootDoc = DocumentFile.fromTreeUri(this@MainActivity, folderUri)
-                              rootDoc?.listFiles()?.filter {
-                                  it.isFile && (it.name?.endsWith(".jpg", true) == true || it.name?.endsWith(".jpeg", true) == true)
-                              } ?: emptyList()
-                          } catch (e: Exception) {
-                              emptyList()
-                          }
-                      }
-
-                      if (files.isEmpty()) {
-                          Toast.makeText(this@MainActivity, "写真が見つかりませんでした", Toast.LENGTH_SHORT).show()
-                          tvImageInfo.text = "写真なし"
-                          return@launch
-                      }
-
-                      photoList.clear()
-                      val total = files.size
-
-                      withContext(Dispatchers.IO) {
-                          val prefs = getSharedPreferences("exif_metadata_cache", Context.MODE_PRIVATE)
-                          val editor = prefs.edit()
-
-                          files.forEachIndexed { idx, file ->
-                              val item = PhotoItem(file.uri, file.name ?: "", file.lastModified())
-                              val cacheKey = "${file.name}_${file.lastModified()}"
-                              val cachedData = prefs.getString(cacheKey, null)
-
-                              if (cachedData != null) {
-                                  if (cachedData != "NO_GPS") {
-                                      val parts = cachedData.split(",")
-                                      if (parts.size >= 2) {
-                                          item.lat = parts[0].toDoubleOrNull()
-                                          item.lon = parts[1].toDoubleOrNull()
-                                          item.debugStatus = "OK"
-                                      }
-                                  } else {
-                                      item.debugStatus = "GPSタグなし"
-                                  }
-                              } else {
-                                  try {
-                                      contentResolver.openFileDescriptor(file.uri, "r")?.use { pfd ->
-                                          val exif = ExifInterface(pfd.fileDescriptor)
-                                          val latLong = FloatArray(2)
-                                          if (exif.getLatLong(latLong)) {
-                                              item.lat = latLong[0].toDouble()
-                                              item.lon = latLong[1].toDouble()
-                                              item.debugStatus = "OK"
-                                              editor.putString(cacheKey, "${item.lat},${item.lon}")
-                                          } else {
-                                              item.debugStatus = "GPSタグなし"
-                                              editor.putString(cacheKey, "NO_GPS")
-                                          }
-                                      }
-                                  } catch (e: Exception) {
-                                      item.debugStatus = "例外"
-                                  }
-                              }
-                              photoList.add(item)
-
-                              if (idx % 5 == 0 || idx == total - 1) {
-                                  withContext(Dispatchers.Main) {
-                                      tvImageInfo.text = "写真を解析中... [${idx + 1}/$total]"
-                                  }
-                              }
-                          }
-                          editor.apply()
-                      }
-
-                      applySort()
-
-                      if (restorePhotoName != null) {
-                          val foundIdx = photoList.indexOfFirst { it.name == restorePhotoName }
-                          if (foundIdx != -1) {
-                              currentIndex = foundIdx
-                              displayPhoto(currentIndex)
-                          }
-                      }
-                  }
-              }
-
-              private fun applySort() {
-                  if (photoList.isEmpty()) return
-                  val currentItem = photoList.getOrNull(currentIndex)
-                  if (isSortDesc) {
-                      photoList.sortByDescending { it.lastModified }
-                  } else {
-                      photoList.sortBy { it.lastModified }
-                  }
-
-                  if (currentItem != null) {
-                      val newIndex = photoList.indexOfFirst { it.uri == currentItem.uri }
-                      currentIndex = if (newIndex != -1) newIndex else 0
-                  }
-                  displayPhoto(currentIndex)
-              }
-
-              private fun navigateTo(newIndex: Int) {
-                  if (photoList.isEmpty()) return
-                  if (newIndex in photoList.indices) {
-                      currentIndex = newIndex
-                      displayPhoto(currentIndex)
-                  }
-              }
-
-              private fun displayPhoto(index: Int) {
-                  val item = photoList[index]
-
-                  getSharedPreferences("app_settings", Context.MODE_PRIVATE)
-                      .edit().putString("last_photo_name", item.name).apply()
-
-                  val cacheKey = "${item.uri}_main"
-                  val cachedBmp = memoryCache.get(cacheKey)
-                  if (cachedBmp != null) {
-                      ivThumbnail.setImageBitmap(cachedBmp)
-                  } else {
-                      lifecycleScope.launch(Dispatchers.IO) {
-                          val bmp = decodeSampledBitmap(item.uri, 800, 800)
-                          if (bmp != null) {
-                              memoryCache.put(cacheKey, bmp)
-                              withContext(Dispatchers.Main) {
-                                  if (currentIndex == index) {
-                                      ivThumbnail.setImageBitmap(bmp)
-                                  }
-                              }
-                          }
-                      }
-                  }
-
-                  val gpsText = if (item.lat != null && item.lon != null) {
-                      "GPS: ${"%.6f".format(item.lat)}, ${"%.6f".format(item.lon)}"
-                  } else {
-                      "GPS: なし (${item.debugStatus})"
-                  }
-                  tvImageInfo.text = "[${index + 1}/${photoList.size}] ${item.name}\n$gpsText"
-
-                  val canGoNewer = if (isSortDesc) index > 0 else index < photoList.size - 1
-                  val canGoOlder = if (isSortDesc) index < photoList.size - 1 else index > 0
-
-                  btnNewer.isEnabled = canGoNewer
-                  btnOlder.isEnabled = canGoOlder
-
-                  val hasGps = (item.lat != null && item.lon != null)
-                  btnGsi.isEnabled = hasGps
-                  btnGoogleMap.isEnabled = hasGps
-
-                  renderCurrentPhotoOnMap()
-              }
-
               private fun renderCurrentPhotoOnMap() {
                   if (!isMapReady || photoList.isEmpty()) return
 
                   val current = photoList[currentIndex]
                   val jsonArray = JSONArray()
 
-                  val targets = if (pinLimitCount > 0) photoList.take(pinLimitCount) else photoList
+                  val loadedPhotos = photoList.filter { it.isLoaded }
+                  val targets = if (pinLimitCount > 0) loadedPhotos.take(pinLimitCount) else loadedPhotos
 
                   targets.forEach { p ->
                       if (p.lat != null && p.lon != null) {
@@ -1193,6 +1276,7 @@ jobs:
                               put("index", originalIndex)
                               put("lat", p.lat)
                               put("lon", p.lon)
+                              if (p.direction != null) put("dir", p.direction)
                               put("hasGps", true)
                               put("isCurrent", originalIndex == currentIndex)
                           }
@@ -1214,21 +1298,17 @@ jobs:
                   val item = photoList.getOrNull(currentIndex) ?: return
                   val lat = item.lat ?: return
                   val lon = item.lon ?: return
-                  val url = "https://maps.gsi.go.jp/#18/${lat}/${lon}/"
-                  startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                  startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.gsi.go.jp/#18/${lat}/${lon}/")))
               }
 
               private fun openInGoogleMap() {
                   val item = photoList.getOrNull(currentIndex) ?: return
                   val lat = item.lat ?: return
                   val lon = item.lon ?: return
-                  val uri = Uri.parse("geo:$lat,$lon?q=$lat,$lon(撮影地点)")
-                  val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                  val intent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lon?q=$lat,$lon(撮影地点)")).apply {
                       setPackage("com.google.android.apps.maps")
                   }
-                  try {
-                      startActivity(intent)
-                  } catch (e: Exception) {
+                  try { startActivity(intent) } catch (e: Exception) {
                       startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=$lat,$lon")))
                   }
               }
@@ -1236,11 +1316,7 @@ jobs:
               inner class WebAppInterface {
                   @JavascriptInterface
                   fun onMarkerClicked(index: Int) {
-                      runOnUiThread {
-                          if (index >= 0) {
-                              navigateTo(index)
-                          }
-                      }
+                      runOnUiThread { if (index >= 0) navigateTo(index) }
                   }
               }
           }

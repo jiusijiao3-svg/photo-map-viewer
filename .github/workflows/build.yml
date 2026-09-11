@@ -30,6 +30,8 @@ jobs:
         run: |
           mkdir -p app/src/main/java/com/example/photomapviewer
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
 
           # 1. gradle.properties
           cat << 'EOF' > gradle.properties
@@ -131,7 +133,72 @@ jobs:
           </resources>
           EOF
 
-          # 6. app/src/main/AndroidManifest.xml
+          # 6. アプリアイコンアセット (Adaptive Icon)
+          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_background.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#1A1C1E"
+                  android:pathData="M0,0h108v108h-108z"/>
+          </vector>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_foreground.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:strokeColor="#FFFFFF"
+                  android:strokeWidth="2.5"
+                  android:strokeAlpha="0.8"
+                  android:pathData="M 54,20 A 34,34 0 1,1 53.9,20 Z" />
+              <path
+                  android:fillColor="#0066FF"
+                  android:fillAlpha="0.4"
+                  android:pathData="M 54,54 L 38,26 A 34,34 0 0,1 70,26 Z" />
+              <path
+                  android:strokeColor="#00E5FF"
+                  android:strokeWidth="2"
+                  android:pathData="M 28,36 L 28,28 L 36,28 M 72,28 L 80,28 L 80,36 M 80,72 L 80,80 L 72,80 M 36,80 L 28,80 L 28,72" />
+              <path
+                  android:strokeColor="#FFFFFF"
+                  android:strokeWidth="1"
+                  android:strokeAlpha="0.25"
+                  android:pathData="M 20,54 L 88,54 M 54,20 L 54,88" />
+              <path
+                  android:strokeColor="#FF3333"
+                  android:strokeWidth="2.5"
+                  android:pathData="M 54,42 L 54,66 M 42,54 L 66,54" />
+              <path
+                  android:fillColor="#FF3333"
+                  android:pathData="M 54,51 A 3,3 0 1,1 53.9,51 Z" />
+          </vector>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          EOF
+
+          # 7. app/src/main/AndroidManifest.xml (縦固定 screenOrientation="portrait" を追加)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -150,9 +217,12 @@ jobs:
               <application
                   android:allowBackup="true"
                   android:label="PhotoMapViewer"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
                   android:theme="@style/AppTheme">
                   <activity
                       android:name=".MainActivity"
+                      android:screenOrientation="portrait"
                       android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
@@ -163,7 +233,7 @@ jobs:
           </manifest>
           EOF
 
-          # 7. app/src/main/java/com/example/photomapviewer/MainActivity.kt
+          # 8. app/src/main/java/com/example/photomapviewer/MainActivity.kt
           cat << 'EOF' > app/src/main/java/com/example/photomapviewer/MainActivity.kt
           package com.example.photomapviewer
 
@@ -177,6 +247,7 @@ jobs:
           import android.graphics.Bitmap
           import android.graphics.BitmapFactory
           import android.graphics.Color
+          import android.hardware.GeomagneticField
           import android.hardware.Sensor
           import android.hardware.SensorEvent
           import android.hardware.SensorEventListener
@@ -242,6 +313,7 @@ jobs:
           import java.io.FileOutputStream
           import java.net.HttpURLConnection
           import java.net.URL
+          import java.security.MessageDigest
           import java.text.SimpleDateFormat
           import java.util.Date
           import java.util.Locale
@@ -277,7 +349,7 @@ jobs:
               // モード管理
               private var isCameraMode = false
 
-              // センサー・位置情報
+              // センサー・位置情報 (真北補正用)
               private lateinit var sensorManager: SensorManager
               private var accelerometer: Sensor? = null
               private var magnetometer: Sensor? = null
@@ -285,7 +357,8 @@ jobs:
               private var lastMagnetometer = FloatArray(3)
               private var lastAccelerometerSet = false
               private var lastMagnetometerSet = false
-              private var currentAzimuth = 0.0
+              private var currentAzimuth = 0.0 // 磁北方位
+              private var currentDeclination = 0.0f // 地磁気偏角
               
               private lateinit var fusedLocationClient: FusedLocationProviderClient
               private var locationCallback: LocationCallback? = null
@@ -598,7 +671,7 @@ jobs:
                   stopLocationTracking()
               }
 
-              // --- センサー処理 (コンパス) ---
+              // --- センサー処理 (コンパス ＆ 真北偏角補正) ---
               override fun onSensorChanged(event: SensorEvent?) {
                   if (event == null) return
                   if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
@@ -620,8 +693,12 @@ jobs:
                           
                           currentAzimuth = azimuthInDegrees.toDouble()
                           
+                          // 地図の真北に一致させるため偏角を加算
+                          var trueAzimuth = (currentAzimuth + currentDeclination) % 360.0
+                          if (trueAzimuth < 0) trueAzimuth += 360.0
+                          
                           if (isCameraMode && isMapReady) {
-                              mapWebView.evaluateJavascript("updateCameraCrosshairDir($currentAzimuth);", null)
+                              mapWebView.evaluateJavascript("updateCameraCrosshairDir($trueAzimuth);", null)
                           }
                       }
                   }
@@ -728,8 +805,20 @@ jobs:
                                           exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, if (targetLat >= 0) "N" else "S")
                                           exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, lonStr)
                                           exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, if (targetLon >= 0) "E" else "W")
-                                          exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION, "$currentAzimuth/1")
-                                          exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "T")
+
+                                          // ★ 改良点1: GeomagneticField による真北補正
+                                          val geoField = GeomagneticField(
+                                              targetLat.toFloat(),
+                                              targetLon.toFloat(),
+                                              0f,
+                                              System.currentTimeMillis()
+                                          )
+                                          val declination = geoField.declination.toDouble()
+                                          var trueAzimuth = (currentAzimuth + declination) % 360.0
+                                          if (trueAzimuth < 0) trueAzimuth += 360.0
+
+                                          exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION, "%.2f/1".format(Locale.US, trueAzimuth))
+                                          exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "T") // 正真正銘の True North
                                           exif.saveAttributes()
 
                                           val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.JAPAN).format(Date())
@@ -814,6 +903,10 @@ jobs:
                   val callback = object : LocationCallback() {
                       override fun onLocationResult(locationResult: LocationResult) {
                           locationResult.lastLocation?.let { loc ->
+                              // 現在地の偏角を更新
+                              val geoField = GeomagneticField(loc.latitude.toFloat(), loc.longitude.toFloat(), 0f, System.currentTimeMillis())
+                              currentDeclination = geoField.declination
+
                               if (isTrackingGps && isMapReady) {
                                   mapWebView.evaluateJavascript("moveToGpsLocation(${loc.latitude}, ${loc.longitude});", null)
                               }
@@ -1147,6 +1240,12 @@ jobs:
                   }
               }
 
+              // ★ 改良点3: URLのMD5ハッシュ計算
+              private fun md5(input: String): String {
+                  val md = MessageDigest.getInstance("MD5")
+                  return md.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
+              }
+
               private fun checkPermissions() {
                   val permissions = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -1351,7 +1450,10 @@ jobs:
                           if (url.contains("cyberjapandata.gsi.go.jp")) {
                               try {
                                   val tileDir = File(cacheDir, "tiles"); if (!tileDir.exists()) tileDir.mkdirs()
-                                  val cacheFile = File(tileDir, url.hashCode().toString() + if (url.endsWith(".png")) ".png" else ".jpg")
+                                  // ★ 改良点3: hashCode() から MD5ハッシュ化に変更
+                                  val ext = if (url.endsWith(".png")) ".png" else ".jpg"
+                                  val cacheFile = File(tileDir, md5(url) + ext)
+                                  
                                   if (cacheFile.exists() && cacheFile.length() > 0) return WebResourceResponse(if (url.endsWith(".png")) "image/png" else "image/jpeg", "UTF-8", FileInputStream(cacheFile))
                                   val conn = URL(url).openConnection() as HttpURLConnection
                                   conn.connectTimeout = 4000; conn.readTimeout = 4000; conn.connect()
@@ -1424,7 +1526,6 @@ jobs:
                               L.control.zoom({position: 'topleft'}).addTo(map);
                               L.control.layers({"標準地図": stdLayer, "衛星写真": photoLayer}, null, { position: 'topright' }).addTo(map);
 
-                              // GPSトラッキングボタンの追加
                               var GpsControl = L.Control.extend({
                                   options: { position: 'topright' },
                                   onAdd: function (map) {
@@ -1448,7 +1549,6 @@ jobs:
                               });
                               map.addControl(new GpsControl());
 
-                              // マップを指で動かしたらトラッキング解除
                               map.on('dragstart', function() {
                                   var btn = document.querySelector('.gps-btn');
                                   if (btn && btn.classList.contains('active')) {
@@ -1460,12 +1560,10 @@ jobs:
                               var markerLayer = L.layerGroup().addTo(map);
                               var isCameraModeActive = false;
 
-                              // Androidから呼ばれる：トラッキング移動
                               function moveToGpsLocation(lat, lng) {
                                   map.panTo([lat, lng], { animate: true, duration: 0.3 });
                               }
 
-                              // Androidから呼ばれる：カメラモード切替
                               function toggleCameraMode(isCamera) {
                                   isCameraModeActive = isCamera;
                                   var crosshair = document.getElementById('crosshair');
@@ -1473,28 +1571,26 @@ jobs:
                                   if (isCamera) {
                                       crosshair.style.display = 'block';
                                       compass.style.display = 'block';
-                                      markerLayer.clearLayers(); // 撮影中は他のピンを消す
+                                      markerLayer.clearLayers();
                                   } else {
                                       crosshair.style.display = 'none';
                                       compass.style.display = 'none';
                                   }
                               }
 
-                              // Androidから呼ばれる：コンパス方向の更新
-                              function updateCameraCrosshairDir(azimuth) {
+                              function updateCameraCrosshairDir(trueAzimuth) {
                                   if (!isCameraModeActive) return;
                                   var compass = document.getElementById('compass-cone');
-                                  compass.style.transform = 'translate(-50%, -100%) rotate(' + azimuth + 'deg)';
+                                  compass.style.transform = 'translate(-50%, -100%) rotate(' + trueAzimuth + 'deg)';
                               }
 
-                              // Androidから呼ばれる：現在の十字線の座標を取得して返す
                               function getCrosshairLocation() {
                                   var center = map.getCenter();
                                   return JSON.stringify({ lat: center.lat, lng: center.lng });
                               }
 
                               function updatePoints(targetLat, targetLon, hasCoords, allPointsJson, currentIndex) {
-                                  if (isCameraModeActive) return; // カメラモード中はピンを描画しない
+                                  if (isCameraModeActive) return;
                                   markerLayer.clearLayers();
                                   var points = JSON.parse(allPointsJson);
 

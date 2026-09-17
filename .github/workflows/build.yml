@@ -188,6 +188,7 @@ jobs:
           import android.content.DialogInterface
           import android.content.Intent
           import android.content.pm.PackageManager
+          import android.content.pm.ServiceInfo
           import android.graphics.Bitmap
           import android.graphics.BitmapFactory
           import android.graphics.Color
@@ -238,6 +239,7 @@ jobs:
           import androidx.camera.lifecycle.ProcessCameraProvider
           import androidx.camera.view.PreviewView
           import androidx.core.app.NotificationCompat
+          import androidx.core.app.ServiceCompat
           import androidx.core.content.ContextCompat
           import androidx.documentfile.provider.DocumentFile
           import androidx.exifinterface.media.ExifInterface
@@ -271,10 +273,11 @@ jobs:
           import kotlin.math.ln
           import kotlin.math.tan
 
-          // --- フォアグラウンドサービス (スワイプキル対応) ---
+          // --- フォアグラウンドサービス (スワイプキル対応 & API 34安全対策) ---
           class GpsForegroundService : Service() {
               override fun onBind(intent: Intent?): IBinder? = null
               
+              @SuppressLint("ForegroundServiceType", "NewApi")
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
                   val channelId = "gps_service_channel"
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -287,11 +290,19 @@ jobs:
                       .setSmallIcon(android.R.drawable.ic_menu_mylocation)
                       .build()
                       
-                  startForeground(1, notification)
+                  if (Build.VERSION.SDK_INT >= 29) {
+                      try {
+                          ServiceCompat.startForeground(this, 1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+                      } catch (e: Exception) {
+                          startForeground(1, notification)
+                      }
+                  } else {
+                      startForeground(1, notification)
+                  }
                   return START_STICKY
               }
 
-              // ★ スワイプしてタスクキルされた際のクリーンアップ処理
+              // スワイプしてタスクキルされた際のクリーンアップ処理
               override fun onTaskRemoved(rootIntent: Intent?) {
                   super.onTaskRemoved(rootIntent)
                   getSharedPreferences("app_settings", Context.MODE_PRIVATE).edit().putBoolean("gps_enabled", false).apply()
@@ -1735,10 +1746,10 @@ jobs:
                   @JavascriptInterface
                   fun onMarkerClicked(index: Int) { runOnUiThread { if (index >= 0 && !isCameraMode) navigateTo(index) } }
                   
-                  // ★ パン（追従）のON/OFF
+                  // ★ 修正箇所：親クラス(MainActivity)のメソッドを明示的に指定して無限ループを防止
                   @JavascriptInterface
                   fun setMapAutoPan(isTracking: Boolean) {
-                      runOnUiThread { setMapAutoPan(isTracking) }
+                      runOnUiThread { this@MainActivity.setMapAutoPan(isTracking) }
                   }
 
                   // ★ ドラッグされた時に呼ばれる（GPS電源は切らずに追従のみOFF）

@@ -173,8 +173,7 @@ jobs:
           # 7. app/src/main/AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              xmlns:tools="http://schemas.android.com/tools">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -206,7 +205,6 @@ jobs:
                       </intent-filter>
                   </activity>
 
-                  <!-- 永続化用GPSサービス (foregroundServiceTypeを追加) -->
                   <service
                       android:name=".GpsForegroundService"
                       android:foregroundServiceType="location"
@@ -229,7 +227,6 @@ jobs:
           import android.content.DialogInterface
           import android.content.Intent
           import android.content.pm.PackageManager
-          import android.content.pm.ServiceInfo
           import android.graphics.Bitmap
           import android.graphics.BitmapFactory
           import android.graphics.Color
@@ -317,7 +314,6 @@ jobs:
           class GpsForegroundService : Service() {
               override fun onBind(intent: Intent?): IBinder? = null
               
-              @SuppressLint("ForegroundServiceType")
               override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
                   val channelId = "gps_service_channel"
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -330,12 +326,7 @@ jobs:
                       .setSmallIcon(android.R.drawable.ic_menu_mylocation)
                       .build()
                       
-                  // Android 14対策: foregroundServiceType を明示的に指定
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                      startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-                  } else {
-                      startForeground(1, notification)
-                  }
+                  startForeground(1, notification)
                   
                   return START_STICKY
               }

@@ -33,33 +33,23 @@ jobs:
           mkdir -p app/src/main/res/drawable
           mkdir -p app/src/main/res/mipmap-anydpi-v26
 
-          # 1. gradle.properties
           cat << 'EOF' > gradle.properties
           android.useAndroidX=true
           android.enableJetifier=true
           EOF
 
-          # 2. settings.gradle.kts
           cat << 'EOF' > settings.gradle.kts
           pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
           }
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
+              repositories { google(); mavenCentral() }
           }
           rootProject.name = "PhotoMapViewer"
           include(":app")
           EOF
 
-          # 3. build.gradle.kts (Root)
           cat << 'EOF' > build.gradle.kts
           plugins {
               id("com.android.application") version "8.2.2" apply false
@@ -67,17 +57,14 @@ jobs:
           }
           EOF
 
-          # 4. app/build.gradle.kts
           cat << 'EOF' > app/build.gradle.kts
           plugins {
               id("com.android.application")
               id("org.jetbrains.kotlin.android")
           }
-
           android {
               namespace = "com.example.photomapviewer"
               compileSdk = 34
-
               defaultConfig {
                   applicationId = "com.example.photomapviewer"
                   minSdk = 26
@@ -85,26 +72,11 @@ jobs:
                   versionCode = 1
                   versionName = "1.0"
               }
-
-              buildTypes {
-                  release {
-                      isMinifyEnabled = false
-                  }
-              }
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-              packaging {
-                  jniLibs {
-                      useLegacyPackaging = false
-                  }
-              }
+              buildTypes { release { isMinifyEnabled = false } }
+              compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+              kotlinOptions { jvmTarget = "17" }
+              packaging { jniLibs { useLegacyPackaging = false } }
           }
-
           dependencies {
               implementation("androidx.core:core-ktx:1.12.0")
               implementation("androidx.appcompat:appcompat:1.6.1")
@@ -112,39 +84,29 @@ jobs:
               implementation("androidx.documentfile:documentfile:1.0.1")
               implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
               implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
-              
-              // CameraX
               implementation("androidx.camera:camera-core:1.4.1")
               implementation("androidx.camera:camera-camera2:1.4.1")
               implementation("androidx.camera:camera-lifecycle:1.4.1")
               implementation("androidx.camera:camera-view:1.4.1")
-              
-              // GPS
               implementation("com.google.android.gms:play-services-location:21.0.1")
           }
           EOF
 
-          # 5. app/src/main/res/values/styles.xml
           cat << 'EOF' > app/src/main/res/values/styles.xml
           <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar" />
-          </resources>
+          <resources><style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar" /></resources>
           EOF
 
-          # 6. アプリアイコンアセット
           cat << 'EOF' > app/src/main/res/drawable/ic_launcher_background.xml
           <?xml version="1.0" encoding="utf-8"?>
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
               <path android:fillColor="#1A1C1E" android:pathData="M0,0h108v108h-108z"/>
           </vector>
           EOF
 
           cat << 'EOF' > app/src/main/res/drawable/ic_launcher_foreground.xml
           <?xml version="1.0" encoding="utf-8"?>
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
               <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:strokeAlpha="0.8" android:pathData="M 54,20 A 34,34 0 1,1 53.9,20 Z" />
               <path android:fillColor="#0066FF" android:fillAlpha="0.4" android:pathData="M 54,54 L 38,26 A 34,34 0 0,1 70,26 Z" />
               <path android:strokeColor="#00E5FF" android:strokeWidth="2" android:pathData="M 28,36 L 28,28 L 36,28 M 72,28 L 80,28 L 80,36 M 80,72 L 80,80 L 72,80 M 36,80 L 28,80 L 28,72" />
@@ -170,7 +132,6 @@ jobs:
           </adaptive-icon>
           EOF
 
-          # 7. app/src/main/AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -205,6 +166,7 @@ jobs:
                       </intent-filter>
                   </activity>
 
+                  <!-- 永続化用GPSサービス -->
                   <service
                       android:name=".GpsForegroundService"
                       android:foregroundServiceType="location"
@@ -213,7 +175,6 @@ jobs:
           </manifest>
           EOF
 
-          # 8. app/src/main/java/com/example/photomapviewer/MainActivity.kt と Service
           cat << 'EOF' > app/src/main/java/com/example/photomapviewer/MainActivity.kt
           package com.example.photomapviewer
 
@@ -310,7 +271,7 @@ jobs:
           import kotlin.math.ln
           import kotlin.math.tan
 
-          // --- フォアグラウンドサービス ---
+          // --- フォアグラウンドサービス (スワイプキル対応) ---
           class GpsForegroundService : Service() {
               override fun onBind(intent: Intent?): IBinder? = null
               
@@ -327,8 +288,14 @@ jobs:
                       .build()
                       
                   startForeground(1, notification)
-                  
                   return START_STICKY
+              }
+
+              // ★ スワイプしてタスクキルされた際のクリーンアップ処理
+              override fun onTaskRemoved(rootIntent: Intent?) {
+                  super.onTaskRemoved(rootIntent)
+                  getSharedPreferences("app_settings", Context.MODE_PRIVATE).edit().putBoolean("gps_enabled", false).apply()
+                  stopSelf()
               }
           }
 
@@ -366,7 +333,10 @@ jobs:
 
               // モード管理
               private var isCameraMode = false
-              private var isGpsTrackingEnabled = false
+              
+              // ★ 分離された2つの状態
+              private var isGpsPowerOn = false    // GPS自体の電源 (トップボタン)
+              private var isMapAutoPan = false    // 地図の自動追従 (地図上の◎ボタン)
 
               // センサー・位置情報
               private lateinit var sensorManager: SensorManager
@@ -421,7 +391,6 @@ jobs:
 
               private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
 
-              // メモリキャッシュ
               private val memoryCache: LruCache<String, Bitmap> by lazy {
                   val maxMem = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
                   val cacheSize = maxOf(1024, maxMem / 8)
@@ -435,7 +404,7 @@ jobs:
                   if (allGranted) {
                       checkAutoResume()
                       if (getSharedPreferences("app_settings", Context.MODE_PRIVATE).getBoolean("gps_enabled", false)) {
-                          setGpsTrackingState(true)
+                          toggleGpsPower(true)
                       }
                   } else {
                       Toast.makeText(this, "権限が不足しています", Toast.LENGTH_LONG).show()
@@ -461,10 +430,7 @@ jobs:
                   fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
                   locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
-                  val rootContainer = FrameLayout(this).apply {
-                      layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                  }
-
+                  val rootContainer = FrameLayout(this).apply { layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) }
                   mainLayout = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setBackgroundColor(Color.parseColor("#121212"))
@@ -472,50 +438,18 @@ jobs:
                       layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                   }
 
-                  // 1. トップバー
-                  val topRow = LinearLayout(this).apply {
-                      orientation = LinearLayout.HORIZONTAL
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
-                  }
+                  val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp()) }
 
-                  val btnSettings = Button(this).apply {
-                      text = "≡"
-                      textSize = 18f
-                      setBackgroundColor(Color.parseColor("#383838"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(48.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }
-                      setOnClickListener { showMainMenu() }
-                  }
+                  val btnSettings = Button(this).apply { text = "≡"; textSize = 18f; setBackgroundColor(Color.parseColor("#383838")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(48.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }; setOnClickListener { showMainMenu() } }
                   topRow.addView(btnSettings)
 
-                  val btnTopPhoto = Button(this).apply {
-                      text = "◀"
-                      textSize = 12f
-                      setBackgroundColor(Color.parseColor("#383838"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(40.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }
-                      setOnClickListener { if (photoList.isNotEmpty() && !isCameraMode) navigateTo(0) }
-                  }
+                  val btnTopPhoto = Button(this).apply { text = "◀"; textSize = 12f; setBackgroundColor(Color.parseColor("#383838")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(40.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }; setOnClickListener { if (photoList.isNotEmpty() && !isCameraMode) navigateTo(0) } }
                   topRow.addView(btnTopPhoto)
 
-                  val btnCamera = Button(this).apply {
-                      text = "📷"
-                      textSize = 14f
-                      setBackgroundColor(Color.parseColor("#0066FF"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(48.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }
-                      setOnClickListener { toggleCameraMode() }
-                  }
+                  val btnCamera = Button(this).apply { text = "📷"; textSize = 14f; setBackgroundColor(Color.parseColor("#0066FF")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(48.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }; setOnClickListener { toggleCameraMode() } }
                   topRow.addView(btnCamera)
 
-                  val btnSelectFolder = Button(this).apply {
-                      text = "📁 選択"
-                      textSize = 11f
-                      setBackgroundColor(Color.parseColor("#2D2D2D"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }
-                      setOnClickListener { if (!isCameraMode) folderPicker.launch(null) }
-                  }
+                  val btnSelectFolder = Button(this).apply { text = "📁 選択"; textSize = 11f; setBackgroundColor(Color.parseColor("#2D2D2D")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }; setOnClickListener { if (!isCameraMode) folderPicker.launch(null) } }
                   topRow.addView(btnSelectFolder)
 
                   btnGpsToggle = Button(this).apply {
@@ -524,203 +458,61 @@ jobs:
                       setBackgroundColor(Color.parseColor("#383838"))
                       setTextColor(Color.parseColor("#BBBBBB"))
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.8f)
-                      setOnClickListener { setGpsTrackingState(!isGpsTrackingEnabled) }
+                      setOnClickListener { toggleGpsPower(!isGpsPowerOn) }
                   }
                   topRow.addView(btnGpsToggle)
-
                   mainLayout.addView(topRow)
 
-                  // 上部領域
-                  topSection = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply { topMargin = 6.dp() }
-                  }
-
+                  topSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 210.dp()).apply { topMargin = 6.dp() } }
                   setupThumbGestureDetector()
-
-                  thumbContainer = FrameLayout(this).apply {
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                      setBackgroundColor(Color.BLACK)
-                      isClickable = true
-                      isFocusable = true
-                      setOnTouchListener { _, event -> gestureDetectorThumb.onTouchEvent(event); true }
-                  }
-
-                  viewFinder = PreviewView(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                      visibility = View.GONE
-                  }
+                  thumbContainer = FrameLayout(this).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT); setBackgroundColor(Color.BLACK); isClickable = true; isFocusable = true; setOnTouchListener { _, event -> gestureDetectorThumb.onTouchEvent(event); true } }
+                  viewFinder = PreviewView(this).apply { layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT); visibility = View.GONE }
                   thumbContainer.addView(viewFinder)
-
-                  ivThumbnail = ImageView(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                      scaleType = ImageView.ScaleType.FIT_CENTER
-                  }
+                  ivThumbnail = ImageView(this).apply { layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT); scaleType = ImageView.ScaleType.FIT_CENTER }
                   thumbContainer.addView(ivThumbnail)
-
-                  tvImageInfo = TextView(this).apply {
-                      setTextColor(Color.WHITE)
-                      textSize = 11f
-                      setBackgroundColor(Color.parseColor("#99000000"))
-                      setPadding(6.dp(), 4.dp(), 6.dp(), 4.dp())
-                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp()) }
-                  }
+                  tvImageInfo = TextView(this).apply { setTextColor(Color.WHITE); textSize = 11f; setBackgroundColor(Color.parseColor("#99000000")); setPadding(6.dp(), 4.dp(), 6.dp(), 4.dp()); layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp()) } }
                   thumbContainer.addView(tvImageInfo)
-                  
-                  tvBgLoadStatus = TextView(this).apply {
-                      setTextColor(Color.parseColor("#BBBBBB"))
-                      textSize = 9f
-                      setBackgroundColor(Color.parseColor("#66000000"))
-                      setPadding(4.dp(), 2.dp(), 4.dp(), 2.dp())
-                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply { setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp()) }
-                      visibility = View.GONE
-                  }
+                  tvBgLoadStatus = TextView(this).apply { setTextColor(Color.parseColor("#BBBBBB")); textSize = 9f; setBackgroundColor(Color.parseColor("#66000000")); setPadding(4.dp(), 2.dp(), 4.dp(), 2.dp()); layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply { setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp()) }; visibility = View.GONE }
                   thumbContainer.addView(tvBgLoadStatus)
-
                   topSection.addView(thumbContainer)
                   mainLayout.addView(topSection)
 
-                  // 中段ボタン
-                  val midRow = LinearLayout(this).apply {
-                      orientation = LinearLayout.HORIZONTAL
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply { topMargin = 6.dp() }
-                  }
-
-                  btnSwap = Button(this).apply {
-                      text = "⇅"
-                      textSize = 16f
-                      setBackgroundColor(Color.parseColor("#383838"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(44.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }
-                      setOnClickListener { toggleViewOrder() }
-                  }
+                  val midRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 44.dp()).apply { topMargin = 6.dp() } }
+                  btnSwap = Button(this).apply { text = "⇅"; textSize = 16f; setBackgroundColor(Color.parseColor("#383838")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(44.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 4.dp() }; setOnClickListener { toggleViewOrder() } }
                   midRow.addView(btnSwap)
+                  btnGsi = Button(this).apply { text = "国土地理院"; textSize = 11f; setBackgroundColor(Color.parseColor("#333333")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }; setOnClickListener { openInGsiMap() } }
+                  btnGoogleMap = Button(this).apply { text = "Googleマップ"; textSize = 11f; setBackgroundColor(Color.parseColor("#333333")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f); setOnClickListener { openInGoogleMap() } }
+                  midRow.addView(btnGsi); midRow.addView(btnGoogleMap); mainLayout.addView(midRow)
 
-                  btnGsi = Button(this).apply {
-                      text = "国土地理院"
-                      textSize = 11f
-                      setBackgroundColor(Color.parseColor("#333333"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }
-                      setOnClickListener { openInGsiMap() }
-                  }
-                  btnGoogleMap = Button(this).apply {
-                      text = "Googleマップ"
-                      textSize = 11f
-                      setBackgroundColor(Color.parseColor("#333333"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-                      setOnClickListener { openInGoogleMap() }
-                  }
-                  midRow.addView(btnGsi)
-                  midRow.addView(btnGoogleMap)
-                  mainLayout.addView(midRow)
-
-                  // 地図コンテナ
-                  mapContainer = FrameLayout(this).apply {
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 6.dp(); bottomMargin = 6.dp() }
-                  }
-
-                  mapWebView = WebView(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                  }
+                  mapContainer = FrameLayout(this).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = 6.dp(); bottomMargin = 6.dp() } }
+                  mapWebView = WebView(this).apply { layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) }
                   mapContainer.addView(mapWebView)
+                  tvGnssHud = TextView(this).apply { text = "GNSS: 待機中"; setTextColor(Color.parseColor("#DDFFFFFF")); textSize = 10f; setBackgroundColor(Color.parseColor("#88000000")); setPadding(6.dp(), 2.dp(), 6.dp(), 2.dp()); layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp()) } }
+                  mapContainer.addView(tvGnssHud); mainLayout.addView(mapContainer)
 
-                  tvGnssHud = TextView(this).apply {
-                      text = "GNSS: 待機中"
-                      setTextColor(Color.parseColor("#DDFFFFFF"))
-                      textSize = 10f
-                      setBackgroundColor(Color.parseColor("#88000000"))
-                      setPadding(6.dp(), 2.dp(), 6.dp(), 2.dp())
-                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { setMargins(6.dp(), 6.dp(), 6.dp(), 6.dp()) }
-                  }
-                  mapContainer.addView(tvGnssHud)
-                  mainLayout.addView(mapContainer)
+                  btmRowNormal = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp()) }
+                  btnNewer = Button(this).apply { text = "◀ 新しい写真"; textSize = 12f; setBackgroundColor(Color.parseColor("#2D2D2D")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }; setOnClickListener { val t = if (isSortDesc) currentIndex - 1 else currentIndex + 1; navigateTo(t) } }
+                  btnOlder = Button(this).apply { text = "古い写真 ▶"; textSize = 12f; setBackgroundColor(Color.parseColor("#2D2D2D")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = 4.dp() }; setOnClickListener { val t = if (isSortDesc) currentIndex + 1 else currentIndex - 1; navigateTo(t) } }
+                  btmRowNormal.addView(btnNewer); btmRowNormal.addView(btnOlder); mainLayout.addView(btmRowNormal)
 
-                  // 下段ボタン (通常モード)
-                  btmRowNormal = LinearLayout(this).apply {
-                      orientation = LinearLayout.HORIZONTAL
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 48.dp())
-                  }
+                  btmRowCamera = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 64.dp()); visibility = View.GONE }
+                  btnCancelCamera = Button(this).apply { text = "✖ キャンセル"; textSize = 12f; setBackgroundColor(Color.parseColor("#444444")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(120.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 6.dp() }; setOnClickListener { toggleCameraMode() } }
+                  btnShutter = Button(this).apply { text = "📸 座標を直書きして撮影"; textSize = 14f; setBackgroundColor(Color.parseColor("#CC0000")); setTextColor(Color.WHITE); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f); setOnClickListener { takePhotoWithExif() } }
+                  btmRowCamera.addView(btnCancelCamera); btmRowCamera.addView(btnShutter); mainLayout.addView(btmRowCamera)
 
-                  btnNewer = Button(this).apply {
-                      text = "◀ 新しい写真"
-                      textSize = 12f
-                      setBackgroundColor(Color.parseColor("#2D2D2D"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginEnd = 4.dp() }
-                      setOnClickListener { val t = if (isSortDesc) currentIndex - 1 else currentIndex + 1; navigateTo(t) }
-                  }
-                  btnOlder = Button(this).apply {
-                      text = "古い写真 ▶"
-                      textSize = 12f
-                      setBackgroundColor(Color.parseColor("#2D2D2D"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { marginStart = 4.dp() }
-                      setOnClickListener { val t = if (isSortDesc) currentIndex + 1 else currentIndex - 1; navigateTo(t) }
-                  }
-                  btmRowNormal.addView(btnNewer)
-                  btmRowNormal.addView(btnOlder)
-                  mainLayout.addView(btmRowNormal)
-
-                  // 下段ボタン (カメラモード時)
-                  btmRowCamera = LinearLayout(this).apply {
-                      orientation = LinearLayout.HORIZONTAL
-                      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 64.dp())
-                      visibility = View.GONE
-                  }
-                  
-                  btnCancelCamera = Button(this).apply {
-                      text = "✖ キャンセル"
-                      textSize = 12f
-                      setBackgroundColor(Color.parseColor("#444444"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(120.dp(), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = 6.dp() }
-                      setOnClickListener { toggleCameraMode() }
-                  }
-                  btnShutter = Button(this).apply {
-                      text = "📸 座標を直書きして撮影"
-                      textSize = 14f
-                      setBackgroundColor(Color.parseColor("#CC0000"))
-                      setTextColor(Color.WHITE)
-                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-                      setOnClickListener { takePhotoWithExif() }
-                  }
-                  btmRowCamera.addView(btnCancelCamera)
-                  btmRowCamera.addView(btnShutter)
-                  mainLayout.addView(btmRowCamera)
-
-                  rootContainer.addView(mainLayout)
-
-                  // 全画面レイアウト
                   setupFullGestureDetector()
-
-                  fullContainer = FrameLayout(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                      setBackgroundColor(Color.BLACK)
-                      visibility = View.GONE
-                      setOnTouchListener { _, event -> gestureDetectorFull.onTouchEvent(event); true }
-                  }
-
-                  fullImageView = ImageView(this).apply {
-                      layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                      scaleType = ImageView.ScaleType.FIT_CENTER
-                  }
+                  fullContainer = FrameLayout(this).apply { layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT); setBackgroundColor(Color.BLACK); visibility = View.GONE; setOnTouchListener { _, event -> gestureDetectorFull.onTouchEvent(event); true } }
+                  fullImageView = ImageView(this).apply { layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT); scaleType = ImageView.ScaleType.FIT_CENTER }
                   fullContainer.addView(fullImageView)
-                  rootContainer.addView(fullContainer)
+                  rootContainer.addView(mainLayout); rootContainer.addView(fullContainer)
 
                   setContentView(rootContainer)
                   setupWebView()
 
                   val permissions = mutableListOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                      permissions.add(Manifest.permission.ACCESS_MEDIA_LOCATION)
-                  } else {
-                      permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                  }
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                      permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-                  }
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) permissions.add(Manifest.permission.ACCESS_MEDIA_LOCATION)
+                  else permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) permissions.add(Manifest.permission.POST_NOTIFICATIONS)
                   
                   val needed = permissions.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
                   if (needed.isNotEmpty()) {
@@ -728,7 +520,7 @@ jobs:
                   } else {
                       checkAutoResume()
                       if (getSharedPreferences("app_settings", Context.MODE_PRIVATE).getBoolean("gps_enabled", false)) {
-                          setGpsTrackingState(true)
+                          toggleGpsPower(true)
                       }
                   }
               }
@@ -740,7 +532,7 @@ jobs:
                       closeFullScreen()
                       return
                   }
-                  if (isGpsTrackingEnabled) {
+                  if (isGpsPowerOn) {
                       moveTaskToBack(true)
                   } else {
                       super.onBackPressed()
@@ -751,6 +543,12 @@ jobs:
                   super.onResume()
                   accelerometer?.also { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
                   magnetometer?.also { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+                  
+                  // スワイプキル等で裏でGPSが終了していた場合のUI復旧
+                  val prefEnabled = getSharedPreferences("app_settings", Context.MODE_PRIVATE).getBoolean("gps_enabled", false)
+                  if (isGpsPowerOn != prefEnabled) {
+                      toggleGpsPower(prefEnabled)
+                  }
               }
 
               override fun onPause() {
@@ -758,11 +556,12 @@ jobs:
                   sensorManager.unregisterListener(this)
               }
 
-              // --- GPSの常駐/終了管理 ---
+              // ★ 1. GPSメイン電源の管理 (分離)
               @SuppressLint("MissingPermission")
-              private fun setGpsTrackingState(enable: Boolean) {
-                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
-                  isGpsTrackingEnabled = enable
+              private fun toggleGpsPower(enable: Boolean) {
+                  if (enable && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+                  
+                  isGpsPowerOn = enable
                   getSharedPreferences("app_settings", Context.MODE_PRIVATE).edit().putBoolean("gps_enabled", enable).apply()
 
                   if (enable) {
@@ -773,6 +572,8 @@ jobs:
                       ContextCompat.startForegroundService(this, Intent(this, GpsForegroundService::class.java))
                       
                       val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000).build()
+                      locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) } // 重複登録防止
+                      
                       val callback = object : LocationCallback() {
                           override fun onLocationResult(locationResult: LocationResult) {
                               locationResult.lastLocation?.let { loc ->
@@ -780,7 +581,9 @@ jobs:
                                   val geoField = GeomagneticField(loc.latitude.toFloat(), loc.longitude.toFloat(), 0f, System.currentTimeMillis())
                                   currentDeclination = geoField.declination
                                   updateGnssHud()
-                                  if (isGpsTrackingEnabled && isMapReady) {
+                                  
+                                  // 自動追従がONの時のみ地図を動かす (分離ロジック)
+                                  if (isMapAutoPan && isMapReady) {
                                       mapWebView.evaluateJavascript("moveToGpsLocation(${loc.latitude}, ${loc.longitude});", null)
                                   }
                               }
@@ -789,6 +592,7 @@ jobs:
                       locationCallback = callback
                       fusedLocationClient.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
                       
+                      gnssStatusCallback?.let { locationManager?.unregisterGnssStatusCallback(it) }
                       gnssStatusCallback = object : GnssStatus.Callback() {
                           override fun onSatelliteStatusChanged(status: GnssStatus) {
                               var usedCount = 0
@@ -800,6 +604,9 @@ jobs:
                           }
                       }
                       gnssStatusCallback?.let { locationManager?.registerGnssStatusCallback(it, null) }
+                      
+                      // 電源を入れた時は自動で追従モードもONにする
+                      setMapAutoPan(true)
                   } else {
                       btnGpsToggle.text = "📡 OFF"
                       btnGpsToggle.setBackgroundColor(Color.parseColor("#383838"))
@@ -812,21 +619,32 @@ jobs:
                       gnssSatelliteCount = 0
                       gpsAccuracy = -1.0f
                       updateGnssHud()
+                      
+                      // 電源を切った時は追従もOFFにする
+                      setMapAutoPan(false)
                   }
-                  
+              }
+
+              // ★ 2. 地図の自動追従 (パン) 管理
+              private fun setMapAutoPan(enable: Boolean) {
+                  isMapAutoPan = enable
                   if (isMapReady) {
                       mapWebView.evaluateJavascript("setGpsButtonActive($enable);", null)
+                  }
+                  // GPSがOFFなのに◎が押された場合は、GPSも連動してONにしてあげる
+                  if (enable && !isGpsPowerOn) {
+                      toggleGpsPower(true)
                   }
               }
 
               private fun forceExitApp() {
-                  setGpsTrackingState(false)
+                  toggleGpsPower(false)
                   finishAffinity()
               }
 
               private fun updateGnssHud() {
                   runOnUiThread {
-                      if (!isGpsTrackingEnabled) {
+                      if (!isGpsPowerOn) {
                           tvGnssHud.text = "GNSS: 停止中"
                       } else {
                           val accStr = if (gpsAccuracy > 0) "±%.1fm".format(gpsAccuracy) else "--"
@@ -1673,7 +1491,7 @@ jobs:
                       override fun onPageFinished(view: WebView?, url: String?) {
                           isMapReady = true
                           renderCurrentPhotoOnMap()
-                          if (isGpsTrackingEnabled) mapWebView.evaluateJavascript("setGpsButtonActive(true);", null)
+                          if (isMapAutoPan) mapWebView.evaluateJavascript("setGpsButtonActive(true);", null)
                       }
                       override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                           val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
@@ -1770,13 +1588,14 @@ jobs:
                                   onAdd: function (map) {
                                       var container = L.DomUtil.create('div', '');
                                       
+                                      // ★ パン（自動追従）スイッチ
                                       var gpsBtn = L.DomUtil.create('div', 'custom-map-btn gps-btn', container);
                                       gpsBtn.innerHTML = '◎';
                                       gpsBtn.title = "現在地を追従";
                                       L.DomEvent.on(gpsBtn, 'click', function(e) {
                                           L.DomEvent.stopPropagation(e);
                                           var isTracking = gpsBtn.classList.contains('active');
-                                          Android.setGpsTracking(!isTracking);
+                                          Android.setMapAutoPan(!isTracking);
                                       });
 
                                       var jumpBtn = L.DomUtil.create('div', 'custom-map-btn', container);
@@ -1792,10 +1611,12 @@ jobs:
                               });
                               map.addControl(new ActionControl());
 
+                              // ★ 地図を手動でスクロールしたら「追従のみ」をOFFにする (GPS自体は切らない)
                               map.on('dragstart', function() {
                                   var btn = document.querySelector('.gps-btn');
                                   if (btn && btn.classList.contains('active')) {
-                                      Android.setGpsTracking(false);
+                                      btn.classList.remove('active');
+                                      Android.disableAutoPan();
                                   }
                               });
 
@@ -1914,9 +1735,16 @@ jobs:
                   @JavascriptInterface
                   fun onMarkerClicked(index: Int) { runOnUiThread { if (index >= 0 && !isCameraMode) navigateTo(index) } }
                   
+                  // ★ パン（追従）のON/OFF
                   @JavascriptInterface
-                  fun setGpsTracking(isTracking: Boolean) {
-                      runOnUiThread { setGpsTrackingState(isTracking) }
+                  fun setMapAutoPan(isTracking: Boolean) {
+                      runOnUiThread { setMapAutoPan(isTracking) }
+                  }
+
+                  // ★ ドラッグされた時に呼ばれる（GPS電源は切らずに追従のみOFF）
+                  @JavascriptInterface
+                  fun disableAutoPan() {
+                      runOnUiThread { isMapAutoPan = false }
                   }
 
                   @JavascriptInterface
